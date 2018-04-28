@@ -3,8 +3,8 @@ from sys import argv
 from capstone import *
 import sqlite3
 
-if len(argv) != 3:
-	print "%s trace.txt symbols.db" % argv[0]
+if len(argv) < 2:
+	print "%s trace.txt [symbols.db]" % argv[0]
 	exit()
 
 def try_ascii(hexstr):
@@ -20,62 +20,64 @@ def try_ascii(hexstr):
 md = Cs(CS_ARCH_X86, CS_MODE_32)
 md.detail = True
 trace_file = argv[1]
-symbols_db = argv[2]
-db = sqlite3.connect(symbols_db)
-sql = db.cursor()
-
 symbols = {}
-for symbol,start,end,args in sql.execute("select symbol,start,end,args from symbols"):
-	symbols[symbol] = (
-		[ int(start), int(end) ],
-		args
-	)
+
+if len(argv) > 2:
+	symbols_db = argv[2]
+	db = sqlite3.connect(symbols_db)
+	sql = db.cursor()
+
+	for symbol,start,end,args in sql.execute("select symbol,start,end,args from symbols"):
+		symbols[symbol] = (
+			[ int(start), int(end) ],
+			args
+		)
+	db.close()
 
 def get_symbol(eip):
 	for symbol in symbols.keys():
 		(bounds,args) = symbols[symbol]
 		if bounds[0] <= eip <= bounds[1]:
 			return symbol,args
-	return (0,0)
+	return (None,0)
 
 execs = 0
-args = []
-deep = 0
-called = None
+threads = {}
 with open(trace_file) as f:
 	for line in f:
 		inst = None
-		if line.startswith('x'):
+		try:
 			execs += 1
-			_, eip, opcodes, REGS = line.split()
-			eip = int( eip[1:11], 16 )
+			eip_thr, opcodes, REGS = line.split()
+			eip = int( eip_thr[:10], 16 )
+			thr = int( eip_thr[11:] )
 			opcodes = opcodes[1:-1]
 			if eip >= 0x80000000:
 				continue
 			for inst in md.disasm( opcodes.decode('hex'), eip ):
 				break
+		except Exception as e:
+			continue
 
 		if not inst:
 			continue
+		if not thr in threads.keys():
+			threads[thr] = { 'called': None, 'deep': 0, 'args': [] }
 		
-		if not called:
-			(called,args_count) = get_symbol(eip)
-			if not called:
-				called = "0x%08x"%eip
-			print str(deep) + " "*deep + called + '(' + ','.join(args[1:args_count]) + ')'
+		if not threads[thr]['called']:
+			( threads[thr]['called'], args_count ) = get_symbol(eip)
+			if not threads[thr]['called']:
+				threads[thr]['called'] = "0x%08x"%eip
+			print "%d:%d" % (threads[thr]['deep'], thr) + " "*threads[thr]['deep'] + threads[thr]['called'] + '(' + ','.join( threads[thr]['args'][1:args_count] ) + ')'
 
 		if inst.mnemonic == 'call':
-			called = None
-			deep += 1
-			#args.append('ret')
+			threads[thr]['called'] = None
+			threads[thr]['deep'] += 1
 		elif inst.mnemonic == 'ret':
-			if deep > 0:
-				deep -= 1
+			if threads[thr]['deep'] > 0:
+				threads[thr]['deep'] -= 1
 		elif inst.mnemonic == 'push':
-			args.append(inst.op_str)
+			threads[thr]['args'].append(inst.op_str)
 		elif inst.mnemonic == 'pop':
-			if args:
-				args.pop()
-
-	#if execs % 10000 == 0:
-	#	print execs
+			if threads[thr]['args']:
+				threads[thr]['args'].pop()
