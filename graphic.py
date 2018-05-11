@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser( description='execution trace visualization too
 parser.add_argument("tracefile", type=str, help="trace.txt")
 parser.add_argument("symbols", nargs='?', default='', help="symbols.csv")
 parser.add_argument("-from_addr", type=int, default=0, help="from address")
-parser.add_argument("-to_addr", type=int, default=0x7fffffff, help="to address")
+parser.add_argument("-to_addr", type=int, default=0, help="to address")
 parser.add_argument("-modules", nargs="+", help="draw only specified modules")
 parser.add_argument("-from_takt", type=int, default=0, help="from takt")
 parser.add_argument("-to_takt", type=int, default=0, help="to takt")
@@ -67,8 +67,11 @@ module = {}
 symbol = {}
 with open( args.tracefile ) as f:
 	for line in f:
-		eip = line.split()[1][1:11]
-		eip = int(eip, 16)
+		try:
+			eip = line.split()[1][1:11]
+			eip = int(eip, 16)
+		except:
+			continue
 		takt += 1
 
 		if args.from_addr == 0 and args.to_addr == 0 or args.from_addr <= eip <= args.to_addr:
@@ -95,6 +98,9 @@ with open( args.tracefile ) as f:
 		if args.to_takt and takt > args.to_takt:
 			break
 
+if not eips:
+	print "nothing instructions"
+	exit()
 
 if args.modules:
 	min_eip = min( map( lambda m: modules[m][0], args.modules) )
@@ -118,12 +124,12 @@ for symbolname, _range in symbols_used.items():
 	draw.text( (0, int( (start-min_eip)/y_scale) ), symbolname, 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
 
 for _takt in xrange( args.from_takt, takt, (takt - args.from_takt)/10 ):
-	draw.line( ( int(_takt/x_scale), 0, int(_takt/x_scale), HEIGHT ), fill=(0,0,0) )
-	draw.text( ( int(_takt/x_scale), 10 ), str(_takt), 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
+	draw.line( ( int((_takt-args.from_takt)/x_scale), 0, int((_takt-args.from_takt)/x_scale), HEIGHT ), fill=(0,0,0) )
+	draw.text( ( int((_takt-args.from_takt)/x_scale), 10 ), str(_takt), 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
 
 for _addr in xrange( min_eip, max_eip, (max_eip - min_eip)/10 ):
-	draw.line( ( 0, int(_addr/y_scale), WIDTH, int(_addr/y_scale) ), fill=(0,0,0) )
-	draw.text( ( 0, int(_addr/y_scale) ), "0x%08x"%_addr, 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
+	draw.line( ( 0, int((_addr-min_eip)/y_scale), WIDTH, int((_addr-min_eip)/y_scale) ), fill=(0,0,0) )
+	draw.text( ( 0, int((_addr-min_eip)/y_scale) ), "0x%08x"%_addr, 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
 
 
 i = 0
