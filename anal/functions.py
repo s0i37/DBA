@@ -7,7 +7,7 @@ from sys import argv
 from colorama import Fore
 
 if len(argv) < 2:
-	print "%s directory|file"
+	print "%s directory|file" % argv[0]
 	exit()
 
 def enum(r2):
@@ -20,7 +20,7 @@ def enum(r2):
 			end = int( fcn['maxbound'] )
 			nargs = int( fcn['nargs'] )
 			print Fore.LIGHTGREEN_EX + "[+] %s!%s 0x%x 0x%x %d" % (modulename, name, start, end, nargs) + Fore.RESET
-			symbols.writerow( [modulename, name, start, end, nargs] )
+			symbols.writerow( [modulename, name, "0x%08x"%start, "0x%08x"%end, nargs] )
 		except Exception as e:
 			print str(e)
 
