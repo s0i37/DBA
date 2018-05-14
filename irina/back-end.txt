@@ -1,0 +1,40 @@
+/data/<offset>
+select d.addr,d.value,d.takt from data d where d.addr >= 1429712 and d.addr <= 1430259 order by d.addr;
+
+/data/find/<expr>
+???
+
+/data/code/<addr>
+select c.takt,c.eip,d.value from code c inner join data d on c.takt=d.takt where d.addr=1430004;
+
+/data/pages
+select name, low_addr, high_addr from pages order by low_addr;
+
+/data/bytes/<from>/<to>
+select d.addr,d.value,d.takt from data d where d.addr >= 0x401000 and d.addr <= 0x402000;
+
+
+/data/isexist/<offset>
+select 1 from data d where d.addr=0;
+
+
+/code/<offset>
+select c.eip, t.takt, t.thread_id, c.mnem, c.operands, d.access_type, d.addr, d.value from code c left outer join data d on c.takt=d.takt inner join takts t on c.takt=t.takt where c.eip > 15148084 and c.eip < 15148084+100 order by 1
+
+/code/find/<expr>
+select c.takt,c.eip from code c where c.mnem='nop';
+
+/code/data/<addr>
+select d.addr,d.value,c.takt from code c inner join data d on c.takt=d.takt where c.eip=15148014;
+
+/code/regs/<eip>
+select t.eax,t.ecx from takts t inner join code c on t.takt=c.takt where c.eip=15147855;
+
+/code/threads
+select t.thread_id from takts t group by t.thread_id;
+
+/code/eips/<thread>
+select c.eip, t.takt from code c inner join takts t on c.takt=t.takt where t.thread_id=?
+
+/code/isexist/<offset>
+select 1 from code c where c.eip=0;

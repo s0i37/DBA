@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+<link href="{{ url_for('static', filename='bootstrap/dist/css/bootstrap.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='jquery-ui/themes/smoothness/jquery-ui.min.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='style.css') + '?12' }}" rel="stylesheet">
+<script src="{{ url_for('static', filename='jquery/dist/jquery.min.js') }}"></script>
+<script src="{{ url_for('static', filename='jquery-ui/jquery-ui.min.js') }}"></script>
+<script src="{{ url_for('static', filename='sprintf.js') }}"></script>
+<script src="{{ url_for('static', filename='script.js') + '?195' }}"></script>
+<body onload='init()'>
+<div class="container-fluid">
+	<div id="dialog"></div>
+	<div class="row" style="border: 1px solid black;">
+		<canvas id="context_bar" style="border: 1px solid black;" height="120" width="1200"></canvas>
+	</div>
+	<div class="row">
+		<div class="col-md-1" style="border: 1px solid black;">
+			<canvas id="data_bar" height="600" width="60"></canvas>
+		</div>
+		<div class="col-md-10">
+			<form class="form-inline" role="form">
+				<div class="form-group">
+					 
+					<label for="exampleInputEmail1">
+						data offset
+					</label>
+					<input class="form-control" id="data_goto_addr" onchange="data_window.goto(this.value)" />
+				</div>
+				<div class="form-group">
+					 
+					<label for="exampleInputPassword1">
+						data find
+					</label>
+					<input class="form-control" id="data_search_addr" onchange="data_window.search(this.value)" />
+				</div>
+				<div class="form-group">
+					 
+					<label for="exampleInputEmail1">
+						code offset
+					</label>
+					<input class="form-control" id="code_goto_addr" onchange="code_window.goto(this.value)" />
+				</div>
+				<div class="form-group">
+					 
+					<label for="exampleInputPassword1">
+						code find
+					</label>
+					<input class="form-control" id="code_search_eip" onchange="code_window.search(this.value)" />
+				</div>
+			</form>
+		</div>
+		<div class="col-md-1" style="border: 1px solid black;">
+			<canvas id="code_bar" style="border: 1px solid black;" height="600" width="60"></canvas>
+		</div>
+	</div>
+
+	<div class="row">
+		<div class="col-md-5">
+			<table id='data' class="_data" width='100%' tabindex="1" onkeypress="data_keys(event)">
+				<tbody>
+				</tbody>
+			</table>
+		</div>
+		<div class="col-md-5">
+			<table id="code" class="table" tabindex="1" onkeypress="code_keys(event)">
+				<thead>
+				</thead>
+				<tbody>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</div>
+</body>
+</html>

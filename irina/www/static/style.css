@@ -1,0 +1,9 @@
+._data { font-size: 16px; margin-top: 20px; border: 1px solid gainsboro; }
+._data_bar { width: 30px; height: 100%; padding: 0; }
+#data_bar { height: 100%; }
+
+.bars { padding: 0 !important; }
+.reg_modified { color: red; }
+.reg_const { color: black; }
+.selected { border: 2px solid green; }
+.highlighted { color: blue; }
