@@ -5,7 +5,7 @@ import struct
 import string
 import colorama
 
-__version__ = '0.10'
+__version__ = '0.11'
 
 PAGE_SIZE = 0x1000
 
@@ -43,11 +43,11 @@ class CPU:
 		read = set()
 		write = set()
 		for inst in md.disasm(self.opcode, 0):
-			#(regs_read, regs_write) = inst.regs_access()
+			(regs_read, regs_write) = inst.regs_access()
 			break
-		for reg_read_id in inst.regs_read:
+		for reg_read_id in regs_read:
 			read.add( inst.reg_name(reg_read_id) )
-		for reg_write_id in inst.regs_write:
+		for reg_write_id in regs_write:
 			write.add( inst.reg_name(reg_write_id) )
 		return (read, write)
 
