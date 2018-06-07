@@ -19,13 +19,13 @@ class StopExecution(BaseException):
 class CPU:
 	def __init__(self):
 		self.cache = {}
-		self.ins_count = 0
+		self.takt = 0
 
 	def execute(self, line):
-		self.ins_count += 1
 		(pc,opcode,regs) = line.split()
-		self.eip_before = int( pc.split(':')[0], 16 )
-		self.thread_id = int( pc.split(':')[1], 16 )
+		self.takt = int( pc.split(':')[0] )
+		self.eip_before = int( pc.split(':')[1], 16 )
+		self.thread_id = int( pc.split(':')[2], 16 )
 		self.opcode = opcode[1:-1].decode('hex')
 		(self.eax_before, self.ecx_before, self.edx_before, self.ebx_before, self.esp_before, self.ebp_before, self.esi_before, self.edi_before) = map( lambda v: int(v, 16), regs.split(',') )
 
@@ -175,23 +175,27 @@ cpu = CPU()
 
 def execute(line):
 	global cpu
+	
 	try:
-		cpu.execute(line)
+		if line.find('{') != -1:
+			cpu.execute(line)
+		else:
+			return False
 	except Exception as e:
 		print str(e)
 		return False
 
 	cpu.instruction = cpu.disas()
 	
-	if cpu.ins_count and not cpu.ins_count % 1000:
-		print colorama.Fore.LIGHTCYAN_EX + "[%d] 0x%08x: %s" % (cpu.ins_count, cpu.eip_before, cpu.instruction) + colorama.Fore.RESET
+	if cpu.takt and not cpu.takt % 1000:
+		print colorama.Fore.CYAN + "[*] %d:0x%08x: %s" % (cpu.takt, cpu.eip_before, cpu.instruction) + colorama.Fore.RESET
 	
 	if cpu.instruction.split()[0] in ('ret', 'call'):
 		#return False
 		pass
 
 	if cpu.instruction.split()[0] == 'sysenter':
-		print colorama.Fore.GREEN + "[%d] sysenter (EAX=0x%x)" % (cpu.ins_count, cpu.eax_before) + colorama.Fore.RESET
+		print colorama.Fore.GREEN + "[*] %d sysenter (EAX=0x%x)" % (cpu.takt, cpu.eax_before) + colorama.Fore.RESET
 
 	used_registers = cpu.get_used_registers()
 	used_memory = EMU.get_used_memory(cpu)
