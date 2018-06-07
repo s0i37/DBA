@@ -1,3 +1,4 @@
+#!/usr/bin/python
 from PIL import Image, ImageDraw, ImageFont
 from random import random
 from sys import argv,stdout
@@ -157,7 +158,6 @@ heap = []
 def save_heap_ptr():
 	pass
 
-takt = 0
 instr = 0
 memop_r = 0
 memop_r_covered = 0
@@ -169,13 +169,14 @@ with open( args.tracefile ) as f:
 		try:
 			if line.find('{') != -1:
 				(eip,opcode,regs) = line.split()
-				(eip,thread) = map( lambda x: int(x, 16), eip.split(':') )
+				takt = int( eip.split(':')[0] )
+				(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
 				(eax,ecx,edx,ebx,esp,ebp,esi,edi) = map( lambda x: int(x,16), regs.split(',') )
 				memory = None
-				takt += 1
 			elif line.find('[') != -1:
 				(eip,memory,direction,value) = line.split()
-				(eip,thread) = map( lambda x: int(x, 16), eip.split(':') )
+				takt = int( eip.split(':')[0] )
+				(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
 				memory = int( memory[1:-1], 16 )
 				value = int( value, 16 )
 				opcode = None
