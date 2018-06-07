@@ -14,12 +14,36 @@ tainted_regs = set()
 tainted_mems = set()
 from_takt = 0
 
+def find_string(addr, string):
+	result = False
+	low_boundary_search = addr - len(string)
+	while addr >= low_boundary_search:
+		for i in xrange( len(string) ):
+			value = cpu.cache.get_byte(addr + i)
+			if value == None:
+				return False
+			if string.find( chr(value) ) == -1:
+				result = False
+				addr -= 1
+				break
+			else:
+				result = True
+	return result
+
+
 def taint(used_registers, used_memory):
 	global tainted_regs, tainted_mems
 
 	used_regs_r, used_regs_w = used_registers
 	used_mems_r, used_mems_w = used_memory
 	is_spread = False
+
+	if args.taint_data:
+		for used_memory_cell in used_mems_r:
+			if find_string(used_memory_cell, args.taint_data):
+				is_spread = True
+				print colorama.Fore.GREEN + "[+] use tainted string: %s" % (args.taint_data,) + colorama.Fore.RESET
+
 
 	for used_reg in used_regs_r:
 		used_reg = CPU.get_full_register(used_reg)
@@ -47,8 +71,8 @@ def taint(used_registers, used_memory):
 			if used_reg in tainted_regs:
 				tainted_regs.remove(used_reg)
 		for used_memory_cell in used_mems_w:
-			print colorama.Fore.GREEN + "[-] release memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 			if used_memory_cell in tainted_mems:
+				print colorama.Fore.GREEN + "[-] release memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 				tainted_mems.remove(used_memory_cell)
 
 	return is_spread

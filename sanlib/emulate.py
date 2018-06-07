@@ -15,10 +15,49 @@ md.detail = True
 class StopExecution(BaseException):
 	pass
 
+class Cache:
+	def __init__(self):
+		self.mem = {}
+
+	def get_byte(self,addr):
+		return self.mem.get(addr)
+
+	def set_byte(self,addr,val):
+		self.mem[addr] = val
+
+	def get_word(self,addr):
+		return (self.get_byte(addr+1) << 8) + self.get_byte(addr)
+
+	def set_word(self,addr,val):
+		self.mem[addr] = val % 0x100
+		self.mem[addr+1] = ( val >> 8 ) % 0x100
+
+	def get_dword(self,addr):
+		return (self.get_word(addr+2) << 16) + self.get_word(self,addr)
+
+	def set_dword(self,addr,val):
+		self.mem[addr] = val % 0x100
+		self.mem[addr+1] = ( val >> 8 ) % 0x100
+		self.mem[addr+2] = ( val >> 16 ) % 0x100
+		self.mem[addr+3] = ( val >> 24 ) % 0x100
+
+	def get_qword(self,addr):
+		return (self.get_dword(addr+4) << 32) + self.get_dword(self,addr)
+
+	def set_qword(self,addr,val):
+		self.mem[addr] = val % 0x100
+		self.mem[addr+1] = ( val >> 8 ) % 0x100
+		self.mem[addr+2] = ( val >> 16 ) % 0x100
+		self.mem[addr+3] = ( val >> 24 ) % 0x100
+		self.mem[addr+4] = ( val >> 32 ) % 0x100
+		self.mem[addr+5] = ( val >> 40 ) % 0x100
+		self.mem[addr+6] = ( val >> 48 ) % 0x100
+		self.mem[addr+7] = ( val >> 56 ) % 0x100
+
 
 class CPU:
 	def __init__(self):
-		self.cache = {}
+		self.cache = Cache()
 		self.takt = 0
 
 	def execute(self, line):
@@ -80,7 +119,14 @@ class EMU:
 		if access in (UC_MEM_WRITE,):
 			for i in range(size):
 				EMU.write.add( address + i )
-			cpu.cache[address] = value
+			if size == 1:
+				cpu.cache.set_byte(address,value)
+			if size == 2:
+				cpu.cache.set_word(address,value)
+			if size == 4:
+				cpu.cache.set_dword(address,value)
+			if size == 8:
+				cpu.cache.set_qword(address,value)
 		else:
 			for i in range(size):
 				EMU.read.add( address + i )
