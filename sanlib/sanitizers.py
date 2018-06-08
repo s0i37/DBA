@@ -482,8 +482,18 @@ class Exceptions():
 	def __call__(self, cpu, used_registers, used_memory):
 		if cpu.has_emulated:
 			if self.next_ip.get(cpu.thread_id) and cpu.eip_before != self.next_ip[cpu.thread_id]:
-				print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % ( self.prev_ip[cpu.thread_id][0], self.prev_ip[cpu.thread_id][1] ) + colorama.Back.RESET
-			self.prev_ip[cpu.thread_id] = (cpu.eip_before, cpu.instruction)
+				if not self.prev_ip[cpu.thread_id][2].startswith('j'): # we dont provide EFLAGS through a trace, so cpu.eip_after will wrong predicted
+					print colorama.Back.RED + "[+] " + self.__class__.__name__ + " %d:0x%08x: %s ; %s" % ( self.prev_ip[cpu.thread_id][0], self.prev_ip[cpu.thread_id][1], self.prev_ip[cpu.thread_id][2], self.prev_ip[cpu.thread_id][3] ) + colorama.Back.RESET
+			
+			used = ''
+			for reg in used_registers[0] ^ used_registers[1]:
+				used += " %s=0x%08x," % ( reg, cpu.get( cpu.get_full_register(reg) ) )
+			#for mem_r in used_memory[0]:
+			#	used += " 0x%08x -> 0x%08x," % ( mem_r, cpu.cache.get_dword(mem_r) )
+			#for mem_w in used_memory[1]:
+			#	used += " 0x%08x -> 0x%08x," % ( mem_w, cpu.cache.get_dword(mem_w) )
+
+			self.prev_ip[cpu.thread_id] = (cpu.takt, cpu.eip_before, cpu.instruction, used)
 			self.next_ip[cpu.thread_id] = cpu.eip_after
 		else:
 			self.prev_ip[cpu.thread_id] = None
