@@ -20,7 +20,7 @@ class Cache:
 		self.mem = {}
 
 	def get_byte(self,addr):
-		return self.mem.get(addr)
+		return self.mem.get(addr) or 0xff
 
 	def set_byte(self,addr,val):
 		self.mem[addr] = val
@@ -33,7 +33,7 @@ class Cache:
 		self.mem[addr+1] = ( val >> 8 ) % 0x100
 
 	def get_dword(self,addr):
-		return (self.get_word(addr+2) << 16) + self.get_word(self,addr)
+		return (self.get_word(addr+2) << 16) + self.get_word(addr)
 
 	def set_dword(self,addr,val):
 		self.mem[addr] = val % 0x100
@@ -42,7 +42,7 @@ class Cache:
 		self.mem[addr+3] = ( val >> 24 ) % 0x100
 
 	def get_qword(self,addr):
-		return (self.get_dword(addr+4) << 32) + self.get_dword(self,addr)
+		return (self.get_dword(addr+4) << 32) + self.get_dword(addr)
 
 	def set_qword(self,addr,val):
 		self.mem[addr] = val % 0x100
@@ -69,7 +69,7 @@ class CPU:
 		(self.eax_before, self.ecx_before, self.edx_before, self.ebx_before, self.esp_before, self.ebp_before, self.esi_before, self.edi_before) = map( lambda v: int(v, 16), regs.split(',') )
 
 	def get(self, regname, when='before'):
-		return self.__dict__[ CPU.get_full_register(regname) + '_' + when ]
+		return self.__dict__.get( CPU.get_full_register(regname) + '_' + when ) or 0xffffffff
 		
 	def disas(self):
 		mnem = ""
@@ -135,12 +135,13 @@ class EMU:
 		try:
 			EMU._alloc_region(address)
 		except:
-			print colorama.Back.RED + "[!] error allocating memory at 0x%08x" % (address,) + colorama.Back.RESET
+			#print colorama.Back.RED + "[!] error allocating memory at 0x%08x" % (address,) + colorama.Back.RESET
+			pass
 
 	@staticmethod
 	def _alloc_region(address):
 		address &= 0xfffff000
-		print colorama.Fore.BLUE + "[*] allocate 0x%08x" % address + colorama.Fore.RESET
+		#print colorama.Fore.BLUE + "[*] allocate 0x%08x" % address + colorama.Fore.RESET
 		EMU.mu.mem_map( address, PAGE_SIZE )
 		EMU.allocated_regions.add( address )
 
@@ -158,7 +159,7 @@ class EMU:
 		for region in EMU.allocated_regions:
 			try:
 				EMU.mu.mem_unmap(region, PAGE_SIZE)
-				print colorama.Fore.BLUE + "[*] free 0x%08x" % (region,) + colorama.Fore.RESET
+				#print colorama.Fore.BLUE + "[*] free 0x%08x" % (region,) + colorama.Fore.RESET
 			except Exception as e:
 				print str(e)
 		EMU.allocated_regions = set()
@@ -185,7 +186,7 @@ class EMU:
 				cpu.has_emulated = False
 				max_attempts -= 1
 				if max_attempts <= 0:
-					print(colorama.Fore.RED + "[!] error emulation %s" % cpu.disas() + colorama.Fore.RESET)
+					#print colorama.Fore.RED + "[!] error emulation %s" % cpu.disas() + colorama.Fore.RESET
 					break
 
 				EMU.mu.reg_write(UC_X86_REG_EAX, cpu.eax_before)
@@ -213,7 +214,7 @@ class EMU:
 				EMU.mu.emu_stop()
 				EMU.read = set()
 				EMU.write = set()
-				print colorama.Fore.LIGHTBLACK_EX + "[!] " + str(e) + colorama.Fore.RESET
+				#print colorama.Fore.LIGHTBLACK_EX + "[!] " + str(e) + colorama.Fore.RESET
 		return (EMU.read, EMU.write)
 
 
@@ -241,7 +242,7 @@ def execute(line):
 		pass
 
 	if cpu.instruction.split()[0] == 'sysenter':
-		print colorama.Fore.GREEN + "[*] %d sysenter (EAX=0x%x)" % (cpu.takt, cpu.eax_before) + colorama.Fore.RESET
+		print colorama.Fore.CYAN + "[*] %d:sysenter (EAX=0x%x)" % (cpu.takt, cpu.eax_before) + colorama.Fore.RESET
 
 	used_registers = cpu.get_used_registers()
 	used_memory = EMU.get_used_memory(cpu)
