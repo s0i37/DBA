@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from sanlib.emulate import execute, CPU
+from lib.emulate import execute, CPU
 import argparse
 import colorama
 

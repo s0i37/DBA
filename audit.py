@@ -1,6 +1,6 @@
 #!/usr/bin/python
-from sanlib.emulate import execute
-from sanlib.sanitizers import MemoryLeak, UMR_stack, UAR, OOB_read_stack, OOB_read_heap, OOB_write_heap, UAF, DoubleFree, UMR_heap, UMR_stack, UWC, Exceptions, SoF
+from lib.emulate import execute
+from lib.sanitizers import MemoryLeak, UMR_stack, UAR, OOB_read_stack, OOB_read_heap, OOB_write_heap, UAF, DoubleFree, UMR_heap, UMR_stack, UWC, Exceptions, SoF
 import sys
 
 MALLOC = 0x00403f94
@@ -30,8 +30,17 @@ sanitizers = [ Exceptions() ]
 trace_file = sys.argv[1]
 
 with open(trace_file) as trace:
-	for line in trace:
-		result = execute(line)
-		if result:
-			for sanitizer in sanitizers:
-				sanitizer(*result)
+	trace.seek(0,2)
+	eof = trace.tell()
+	trace.seek(0)
+	while True:
+		try:
+			result = execute(trace)
+			if not result:	
+				for sanitizer in sanitizers:
+					sanitizer(*result)
+		except Exceptions as e:
+			print str(e)
+		
+		if trace.tell() == eof:
+			break
