@@ -6,7 +6,7 @@ import struct
 import string
 import colorama
 
-__version__ = '0.12'
+__version__ = '0.13'
 
 PAGE_SIZE = 0x1000
 
@@ -19,53 +19,57 @@ class StopExecution(BaseException):
 
 class Cache:
 	def __init__(self):
-		self.mem = {}
+		self.L2 = {}
+
+	def __setitem__(self,attr,val):
+		addr = attr
+		for i in xrange( len(val) ):
+			self.set_byte( addr+i, ord(val[i]) )
 
 	def get_byte(self,addr):
-		return self.mem.get(addr) or 0xff
+		return self.L2.get(addr) or 0x00
 
 	def set_byte(self,addr,val):
-		self.mem[addr] = val
+		self.L2[addr] = val
 
 	def get_word(self,addr):
 		return (self.get_byte(addr+1) << 8) + self.get_byte(addr)
 
 	def set_word(self,addr,val):
-		self.mem[addr] = val % 0x100
-		self.mem[addr+1] = ( val >> 8 ) % 0x100
+		self.L2[addr] = val % 0x100
+		self.L2[addr+1] = ( val >> 8 ) % 0x100
 
 	def get_dword(self,addr):
 		return (self.get_word(addr+2) << 16) + self.get_word(addr)
 
 	def set_dword(self,addr,val):
-		self.mem[addr] = val % 0x100
-		self.mem[addr+1] = ( val >> 8 ) % 0x100
-		self.mem[addr+2] = ( val >> 16 ) % 0x100
-		self.mem[addr+3] = ( val >> 24 ) % 0x100
+		self.L2[addr] = val % 0x100
+		self.L2[addr+1] = ( val >> 8 ) % 0x100
+		self.L2[addr+2] = ( val >> 16 ) % 0x100
+		self.L2[addr+3] = ( val >> 24 ) % 0x100
 
 	def get_qword(self,addr):
 		return (self.get_dword(addr+4) << 32) + self.get_dword(addr)
 
 	def set_qword(self,addr,val):
-		self.mem[addr] = val % 0x100
-		self.mem[addr+1] = ( val >> 8 ) % 0x100
-		self.mem[addr+2] = ( val >> 16 ) % 0x100
-		self.mem[addr+3] = ( val >> 24 ) % 0x100
-		self.mem[addr+4] = ( val >> 32 ) % 0x100
-		self.mem[addr+5] = ( val >> 40 ) % 0x100
-		self.mem[addr+6] = ( val >> 48 ) % 0x100
-		self.mem[addr+7] = ( val >> 56 ) % 0x100
+		self.L2[addr] = val % 0x100
+		self.L2[addr+1] = ( val >> 8 ) % 0x100
+		self.L2[addr+2] = ( val >> 16 ) % 0x100
+		self.L2[addr+3] = ( val >> 24 ) % 0x100
+		self.L2[addr+4] = ( val >> 32 ) % 0x100
+		self.L2[addr+5] = ( val >> 40 ) % 0x100
+		self.L2[addr+6] = ( val >> 48 ) % 0x100
+		self.L2[addr+7] = ( val >> 56 ) % 0x100
 
 
 class CPU:
 	def __init__(self):
-		self.cache = Cache()
 		self.takt = 0
+		self.cache = None
 		self.exception = False
 		self.md = md
 		self.md.detail = True
 		self.mu = mu
-		self.ram = None	
 
 	def set_state(self, trace_line):
 		(pc,opcode,regs) = trace_line.split()
@@ -107,6 +111,19 @@ class CPU:
 		else:
 			return ''
 
+	def get_used_regs(self):
+		readed_registers = set()
+		writed_registers = set()
+		for inst in self.md.disasm(self.opcode, 0):
+			(regs_read, regs_write) = inst.regs_access()
+			break
+		for reg_read_id in regs_read:
+			readed_registers.add( inst.reg_name(reg_read_id) )
+		for reg_write_id in regs_write:
+			writed_registers.add( inst.reg_name(reg_write_id) )
+
+		return (readed_registers, writed_registers)
+
 	def execute(self):	
 		max_attempts = 5
 		try:
@@ -135,19 +152,11 @@ class CPU:
 			self.exception = True
 			print colorama.Fore.LIGHTBLACK_EX + "[!] %s: %s" % ( self.disas(), str(e) ) + colorama.Fore.RESET
 
-		readed_registers = set()
-		writed_registers = set()
-		for inst in self.md.disasm(self.opcode, 0):
-			(regs_read, regs_write) = inst.regs_access()
-			break
-		for reg_read_id in regs_read:
-			readed_registers.add( inst.reg_name(reg_read_id) )
-		for reg_write_id in regs_write:
-			writed_registers.add( inst.reg_name(reg_write_id) )
 
-		return (readed_registers, writed_registers)
-
-class RAM:
+class MCH:
+	'''
+	Memory Controller Hub - memory IO
+	'''
 	def __init__(self):
 		self.mu = mu
 		self.mu.hook_add(UC_HOOK_MEM_READ, self.access)
@@ -156,7 +165,8 @@ class RAM:
 		self.readed_cells = set()
 		self.writed_cells = set()
 		self.allocated_regions = set()
-		self.cpu = None
+		self.cache = None
+		self.ram = None
 
 	def save_state(self, trace_line):
 		(pc,address,direction,value) = trace_line.split()
@@ -169,14 +179,24 @@ class RAM:
 				value = struct.pack( "<H", int(value,16) )
 			elif len(value[2:]) == 4:
 				value = struct.pack( "<I", int(value,16) )
+			elif len(value[2:]) == 8:
+				value = struct.pack( "<Q", int(value,16) )
+			else:
+				value = None
 		except:
 			value = None
 
 		if value:
 			if direction == '->':
 				self.save(address, value)
+				self.ram[address] = value
+				for cell in xrange(address, address+len(value)):
+					self.readed_cells.add(cell)
 			elif direction == '<-':
 				self.allocate(address)
+				self.ram[address] = value
+				for cell in xrange(address, address+len(value)):
+					self.writed_cells.add(cell)
 
 	def access(self, uc, access, address, size, value, user_data):
 		#print "[debug] access memory 0x%08x:%d" % (address, size)
@@ -184,13 +204,14 @@ class RAM:
 			for cell in xrange(address, address+size):
 				self.writed_cells.add(cell)
 			if size == 1:
-				self.cpu.cache.set_byte(address,value)
-			if size == 2:
-				self.cpu.cache.set_word(address,value)
-			if size == 4:
-				self.cpu.cache.set_dword(address,value)
-			if size == 8:
-				self.cpu.cache.set_qword(address,value)
+				value = struct.pack( "B", value)
+			elif size == 2:
+				value = struct.pack( "<H", value)
+			elif size == 4:
+				value = struct.pack( "<I", value)
+			elif size == 8:
+				value = struct.pack( "<Q", value)
+			self.cache[address] = value
 		else:
 			for cell in xrange(address, address+size):
 				self.readed_cells.add(cell)
@@ -223,46 +244,138 @@ class RAM:
 			self.allocated_regions.remove(region)
 
 
-cpu = CPU()
-ram = RAM()
-ram.cpu = cpu
+class RAM:
+	'''
+	For only memory dump files. If taint_data not exists in cpu.cache
+	'''
+	def __init__(self):
+		self.mem = {}
 
-def execute(trace):
-	instruction_loaded = False
-	while True:
-		line = trace.readline()
-		if line.find('{') != -1:
-			if instruction_loaded:
-				trace.seek(-len(line), 1)
-				break
-			cpu.set_state(line)
-			instruction_loaded = True
-		elif line.find('[0x') != -1:
-			ram.save_state(line)
-		else:
-			continue
-		
+	def __setitem__(self,attr,val):
+		addr = attr
+		for i in xrange( len(val) ):
+			self.set_byte( addr+i, ord(val[i]) )
 
-	cpu.instruction = cpu.disas()
+	def get_byte(self,addr):
+		return self.mem.get(addr) or 0x00
 
-	if cpu.takt and not cpu.takt % 1000:
-		stdout.write("\r" + " "*75)
-		stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (cpu.takt, cpu.eip_before, cpu.instruction) + colorama.Fore.RESET )
-		stdout.flush()
-		
-	#if cpu.instruction.split()[0] in ('ret', 'call'):
-	#	return False
+	def set_byte(self,addr,val):
+		self.mem[addr] = val
 
-	if cpu.instruction.split()[0] == 'sysenter':
-		print colorama.Fore.CYAN + "[*] %d:sysenter (EAX=0x%x)" % (cpu.takt, cpu.eax_before) + colorama.Fore.RESET
+	def get_word(self,addr):
+		return (self.get_byte(addr+1) << 8) + self.get_byte(addr)
 
-	ram.save(cpu.eip_before, cpu.opcode)
-	ram.readed_cells = set()
-	ram.writed_cells = set()
-	used_registers = cpu.execute()
-	used_memory = (ram.readed_cells, ram.writed_cells)
+	def set_word(self,addr,val):
+		self.mem[addr] = val % 0x100
+		self.mem[addr+1] = ( val >> 8 ) % 0x100
 
-	#ram.free()
+	def get_dword(self,addr):
+		return (self.get_word(addr+2) << 16) + self.get_word(addr)
 
-	return (cpu, used_registers, used_memory)
+	def set_dword(self,addr,val):
+		self.mem[addr] = val % 0x100
+		self.mem[addr+1] = ( val >> 8 ) % 0x100
+		self.mem[addr+2] = ( val >> 16 ) % 0x100
+		self.mem[addr+3] = ( val >> 24 ) % 0x100
 
+	def get_qword(self,addr):
+		return (self.get_dword(addr+4) << 32) + self.get_dword(addr)
+
+	def set_qword(self,addr,val):
+		self.mem[addr] = val % 0x100
+		self.mem[addr+1] = ( val >> 8 ) % 0x100
+		self.mem[addr+2] = ( val >> 16 ) % 0x100
+		self.mem[addr+3] = ( val >> 24 ) % 0x100
+		self.mem[addr+4] = ( val >> 32 ) % 0x100
+		self.mem[addr+5] = ( val >> 40 ) % 0x100
+		self.mem[addr+6] = ( val >> 48 ) % 0x100
+		self.mem[addr+7] = ( val >> 56 ) % 0x100
+
+
+class Trace:
+	def __init__(self, trace):
+		self.trace = trace
+		self.trace.seek(0,2)
+		self.eof_trace = trace.tell()
+		self.trace.seek(0)
+		self.cpu = CPU()
+		self.io = MCH()
+		self.cpu.cache = self.io.cache = Cache()
+		self.io.ram = RAM()
+
+	def step(self):
+		'''
+		load instruction
+		'''
+		was_instruction_load = False
+		while True:
+			if self.trace.tell() == self.eof_trace:
+				raise StopExecution
+			line = self.trace.readline()
+			if line.find('{') != -1:
+				if was_instruction_load:
+					self.trace.seek(-len(line), 1)
+					break
+				self.cpu.set_state(line)
+				was_instruction_load = True
+			elif line.find('[0x') != -1:
+				self.io.save_state(line)
+			else:
+				continue
+
+		self.cpu.instruction = self.cpu.disas()
+
+	def instruction(self):
+		'''
+		get info about instruction (without emulation)
+
+		:return: (usable_registers, usable_memory)
+		'''
+		self.io.readed_cells = set()
+		self.io.writed_cells = set()
+		self.step()
+
+		if self.cpu.takt and not self.cpu.takt % 1000:
+			stdout.write("\r" + " "*75)
+			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.instruction) + colorama.Fore.RESET )
+			stdout.flush()
+
+		used_registers = self.cpu.get_used_regs()
+		used_memory = (self.io.readed_cells, self.io.writed_cells)
+		return (used_registers, used_memory)
+
+	def execute(self):
+		'''
+		emulate one instruction from trace
+
+		:return: (usable_registers, usable_memory)
+		'''
+		self.step()
+
+		if self.cpu.takt and not self.cpu.takt % 1000:
+			stdout.write("\r" + " "*75)
+			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.instruction) + colorama.Fore.RESET )
+			stdout.flush()
+			
+		if self.cpu.instruction.split()[0] in ('ret', 'call', 'int') or self.cpu.instruction.split()[0].startswith('j'):
+			return False
+
+		if self.cpu.instruction.split()[0] == 'sysenter':
+			print colorama.Fore.CYAN + "[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET
+
+		self.io.save(self.cpu.eip_before, self.cpu.opcode)
+		self.io.readed_cells = set()
+		self.io.writed_cells = set()
+		used_registers = self.cpu.get_used_regs()
+		self.cpu.execute()
+		used_memory = (self.io.readed_cells, self.io.writed_cells)
+
+		#self.io.free()
+
+		return (used_registers, used_memory)
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		self.trace.close()
