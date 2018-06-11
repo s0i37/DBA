@@ -1,6 +1,13 @@
 import colorama
 
-__version__ = '0.10'
+__version__ = '0.11'
+
+def report(error_class, cpu, info=''):
+	print colorama.Back.RED + "[+] " + error_class.__name__ + " %d:0x%08x: %s" % (cpu.takt, cpu.eip_before, cpu.instruction),
+	if info:
+		print "; " + info
+	print colorama.Back.RESET
+
 
 class MemoryLeak():
 	"""removing pointers after use, dont free"""
@@ -80,7 +87,7 @@ class MemoryLeak():
 
 
 			if not self.tainted_regs[cpu.thread_id] and not self.tainted_mems[cpu.thread_id]:
-				print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+				report(self.__class__, cpu)
 				self.is_taint = False
 
 class UWC():
@@ -139,7 +146,7 @@ class UWC():
 		for memory in list(used_memory_read) + list(used_memory_write):
 			for heap in self.heap:
 				if memory in heap['range'] and not heap['is_checked']:
-					print colorama.Back.RED + self.__class__.__name__ + " %d 0x%08x: %s" % (cpu.ins_count, cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+					report(self.__class__, cpu)
 
 class UMR_stack():
 	"""UMR - Uninitialized Memory Read in stack"""
@@ -157,7 +164,7 @@ class UMR_stack():
 		for memory in used_memory_read:
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
 				if not memory in self.stack_initialized:
-					print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+					report(self.__class__, cpu)
 
 		for memory in used_memory_write:
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
@@ -216,7 +223,7 @@ class UMR_heap():
 
 		for memory in used_memory_read:
 			if memory in self.heap_uninitialized:
-				print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+				report(self.__class__, cpu)
 
 
 class DoubleFree():
@@ -245,7 +252,7 @@ class DoubleFree():
 			for heap in self.heap:
 				if heap_addr in heap['range']:
 					if heap['is_free']:
-						print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+						report(self.__class__, cpu)
 					else:
 						heap['is_free'] = True
 
@@ -309,7 +316,7 @@ class UAF():
 		for memory in list(used_memory_read) + list(used_memory_write):
 			for heap in self.heap:
 				if memory in heap['range'] and heap['is_free']:
-					print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+					report(self.__class__, cpu)
 
 
 class UAR():
@@ -320,7 +327,7 @@ class UAR():
 		for memory in list(used_memory_read) + list(used_memory_write):
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
 				if memory < cpu.esp_before-4:  # its not for every time true
-					print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+					report(self.__class__, cpu)
 
 class IoF():
 	"""IOF - Integer overflow (UBSAN)"""
@@ -364,7 +371,7 @@ class OOB_read_heap():
 		(used_memory_read, used_memory_write) = used_memory
 		for memory in used_memory_read:
 			if memory in self.heap_chunks:
-				print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+				report(self.__class__, cpu)
 
 class OOB_write_heap():
 	"""OOB - Out Of Bounds write heap"""
@@ -404,7 +411,7 @@ class OOB_write_heap():
 		(used_memory_read, used_memory_write) = used_memory
 		for memory in used_memory_write:
 			if memory in self.heap_chunks:
-				print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+				report(self.__class__, cpu)
 
 class OOB_read_stack():
 	"""OOB - Out Of Bounds read stack"""
@@ -436,7 +443,7 @@ class OOB_read_stack():
 		for memory in used_memory_read:
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
 				if self._deep in self.stack_frame_chunks.keys() and memory in self.stack_frame_chunks[self._deep]:
-					print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % (cpu.eip_before, cpu.instruction) + colorama.Back.RESET
+					report(self.__class__, cpu)
 
 
 class OOB_write_stack():
@@ -457,7 +464,7 @@ class SoF():
 	def __call__(self, cpu, used_registers, used_memory):
 		if cpu.exception:
 			if self.has_moved_to_another_page and cpu.eip_before != self.next_ip[cpu.thread_id]:
-				print colorama.Back.RED + self.__class__.__name__ + " 0x%08x: %s" % ( self.prev_ip[cpu.thread_id][0], self.prev_ip[cpu.thread_id][1] ) + colorama.Back.RESET
+				report(self.__class__, cpu)
 			
 			if cpu.esp_before & 0xfffff000 != cpu.esp_after & 0xfffff000: # moving to another stack memory page
 				self.prev_ip[cpu.thread_id] = (cpu.eip_before, cpu.instruction)
@@ -481,9 +488,8 @@ class Exceptions():
 
 	def __call__(self, cpu, used_registers, used_memory):
 		if cpu.exception:
-			if self.next_ip.get(cpu.thread_id) and cpu.eip_before != self.next_ip[cpu.thread_id]:
-				if not self.prev_ip[cpu.thread_id][2].startswith('j'): # we dont provide EFLAGS through a trace, so cpu.eip_after will wrong predicted
-					print colorama.Back.RED + "[+] " + self.__class__.__name__ + " %d:0x%08x: %s ; %s" % ( self.prev_ip[cpu.thread_id][0], self.prev_ip[cpu.thread_id][1], self.prev_ip[cpu.thread_id][2], self.prev_ip[cpu.thread_id][3] ) + colorama.Back.RESET
+			#if self.next_ip.get(cpu.thread_id) and cpu.eip_before != self.next_ip[cpu.thread_id]:
+			#	if not self.prev_ip[cpu.thread_id][2].startswith('j'): # we dont provide EFLAGS through a trace, so cpu.eip_after will wrong predicted
 			
 			used = ''
 			for reg in used_registers[0] ^ used_registers[1]:
@@ -493,8 +499,4 @@ class Exceptions():
 			#for mem_w in used_memory[1]:
 			#	used += " 0x%08x -> 0x%08x," % ( mem_w, cpu.cache.get_dword(mem_w) )
 
-			self.prev_ip[cpu.thread_id] = (cpu.takt, cpu.eip_before, cpu.instruction, used)
-			self.next_ip[cpu.thread_id] = cpu.eip_after
-		else:
-			self.prev_ip[cpu.thread_id] = None
-			self.next_ip[cpu.thread_id] = None
+			report(self.__class__, cpu, info=used)
