@@ -2,8 +2,12 @@ import colorama
 
 __version__ = '0.11'
 
-def report(error_class, cpu, info=''):
-	print colorama.Back.RED + "[+] " + error_class.__name__ + " %d:0x%08x: %s" % (cpu.takt, cpu.eip_before, cpu.instruction),
+class SEVERITY:
+	HIGH = colorama.Back.RED
+	MIDDLE = colorama.Back.YELLOW
+
+def report(error_class, cpu, severity, info=''):
+	print "\n" + severity + "[+] " + error_class.__name__ + " %d:0x%08x: %s" % (cpu.takt, cpu.eip_before, cpu.instruction),
 	if info:
 		print "; " + info
 	print colorama.Back.RESET
@@ -57,22 +61,22 @@ class MemoryLeak():
 				used_reg = cpu.get_full_register(used_reg)
 				if used_reg and used_reg in self.tainted_regs[cpu.thread_id]:
 					is_spread = True
-					print colorama.Fore.GREEN + "[+] use tainted register: %s" % (used_reg,) + colorama.Fore.RESET
+					print colorama.Fore.GREEN + "\n[+] use tainted register: %s" % (used_reg,) + colorama.Fore.RESET,
 
 			for used_memory_cell in used_mems_r:
 				if used_memory_cell in self.tainted_mems[cpu.thread_id]:
 					is_spread = True
-					print colorama.Fore.GREEN + "[+] use tainted memory: 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
+					print colorama.Fore.GREEN + "\n[+] use tainted memory: 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET,
 
 			if is_spread:
 				print 'spread'
 				for used_reg in used_regs_w:
 					used_reg = cpu.get_full_register(used_reg)
 					if not used_reg in self.tainted_regs[cpu.thread_id]:
-						print colorama.Fore.GREEN + "[+] taint register %s" % (used_reg,) + colorama.Fore.RESET
+						print colorama.Fore.GREEN + "\n[+] taint register %s" % (used_reg,) + colorama.Fore.RESET,
 						self.tainted_regs[cpu.thread_id].add(used_reg)
 				for used_memory_cell in used_mems_w:
-					print colorama.Fore.GREEN + "[+] taint memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
+					print colorama.Fore.GREEN + "\n[+] taint memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET,
 					if not used_memory_cell in self.tainted_mems[cpu.thread_id]:
 						self.tainted_mems[cpu.thread_id].add(used_memory_cell)
 			else:
@@ -81,13 +85,13 @@ class MemoryLeak():
 					if used_reg in self.tainted_regs[cpu.thread_id]:
 						self.tainted_regs[cpu.thread_id].remove(used_reg)
 				for used_memory_cell in used_mems_w:
-					#print colorama.Fore.RED + "[-] free memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
+					#print colorama.Fore.RED + "\n[-] free memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET,
 					if used_memory_cell in self.tainted_mems[cpu.thread_id]:
 						self.tainted_mems[cpu.thread_id].remove(used_memory_cell)
 
 
 			if not self.tainted_regs[cpu.thread_id] and not self.tainted_mems[cpu.thread_id]:
-				report(self.__class__, cpu)
+				report(self.__class__, cpu, SEVERITY.MIDDLE)
 				self.is_taint = False
 
 class UWC():
@@ -146,7 +150,7 @@ class UWC():
 		for memory in list(used_memory_read) + list(used_memory_write):
 			for heap in self.heap:
 				if memory in heap['range'] and not heap['is_checked']:
-					report(self.__class__, cpu)
+					report(self.__class__, cpu, SEVERITY.MIDDLE)
 
 class UMR_stack():
 	"""UMR - Uninitialized Memory Read in stack"""
@@ -164,7 +168,7 @@ class UMR_stack():
 		for memory in used_memory_read:
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
 				if not memory in self.stack_initialized:
-					report(self.__class__, cpu)
+					report(self.__class__, cpu, SEVERITY.MIDDLE)
 
 		for memory in used_memory_write:
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
@@ -223,7 +227,7 @@ class UMR_heap():
 
 		for memory in used_memory_read:
 			if memory in self.heap_uninitialized:
-				report(self.__class__, cpu)
+				report(self.__class__, cpu, SEVERITY.MIDDLE)
 
 
 class DoubleFree():
@@ -252,7 +256,7 @@ class DoubleFree():
 			for heap in self.heap:
 				if heap_addr in heap['range']:
 					if heap['is_free']:
-						report(self.__class__, cpu)
+						report(self.__class__, cpu, SEVERITY.MIDDLE)
 					else:
 						heap['is_free'] = True
 
@@ -316,7 +320,7 @@ class UAF():
 		for memory in list(used_memory_read) + list(used_memory_write):
 			for heap in self.heap:
 				if memory in heap['range'] and heap['is_free']:
-					report(self.__class__, cpu)
+					report(self.__class__, cpu, SEVERITY.HIGH)
 
 
 class UAR():
@@ -327,7 +331,7 @@ class UAR():
 		for memory in list(used_memory_read) + list(used_memory_write):
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
 				if memory < cpu.esp_before-4:  # its not for every time true
-					report(self.__class__, cpu)
+					report(self.__class__, cpu, SEVERITY.MIDDLE)
 
 class IoF():
 	"""IOF - Integer overflow (UBSAN)"""
@@ -371,7 +375,7 @@ class OOB_read_heap():
 		(used_memory_read, used_memory_write) = used_memory
 		for memory in used_memory_read:
 			if memory in self.heap_chunks:
-				report(self.__class__, cpu)
+				report(self.__class__, cpu, SEVERITY.MIDDLE)
 
 class OOB_write_heap():
 	"""OOB - Out Of Bounds write heap"""
@@ -411,7 +415,7 @@ class OOB_write_heap():
 		(used_memory_read, used_memory_write) = used_memory
 		for memory in used_memory_write:
 			if memory in self.heap_chunks:
-				report(self.__class__, cpu)
+				report(self.__class__, cpu, SEVERITY.HIGH)
 
 class OOB_read_stack():
 	"""OOB - Out Of Bounds read stack"""
@@ -443,7 +447,7 @@ class OOB_read_stack():
 		for memory in used_memory_read:
 			if (cpu.esp_before & 0xfffff000) <= memory <= (cpu.esp_before | 0xfff):
 				if self._deep in self.stack_frame_chunks.keys() and memory in self.stack_frame_chunks[self._deep]:
-					report(self.__class__, cpu)
+					report(self.__class__, cpu, SEVERITY.MIDDLE)
 
 
 class OOB_write_stack():
@@ -464,7 +468,7 @@ class SoF():
 	def __call__(self, cpu, used_registers, used_memory):
 		if cpu.exception:
 			if self.has_moved_to_another_page and cpu.eip_before != self.next_ip[cpu.thread_id]:
-				report(self.__class__, cpu)
+				report(self.__class__, cpu, SEVERITY.MIDDLE)
 			
 			if cpu.esp_before & 0xfffff000 != cpu.esp_after & 0xfffff000: # moving to another stack memory page
 				self.prev_ip[cpu.thread_id] = (cpu.eip_before, cpu.instruction)
@@ -499,4 +503,4 @@ class Exceptions():
 			#for mem_w in used_memory[1]:
 			#	used += " 0x%08x -> 0x%08x," % ( mem_w, cpu.cache.get_dword(mem_w) )
 
-			report(self.__class__, cpu, info=used)
+			report(self.__class__, cpu, SEVERITY.HIGH, info=used)

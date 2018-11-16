@@ -150,7 +150,7 @@ class CPU:
 		except Exception as e:
 			self.mu.emu_stop()
 			self.exception = True
-			print colorama.Fore.LIGHTBLACK_EX + "[!] %s: %s" % ( self.disas(), str(e) ) + colorama.Fore.RESET
+			#print colorama.Fore.LIGHTBLACK_EX + "\n[!] %s: %s" % ( self.disas(), str(e) ) + colorama.Fore.RESET,
 
 
 class MCH:
@@ -220,7 +220,7 @@ class MCH:
 		#try:
 		#	self.allocate(address)
 		#except:
-		print colorama.Fore.RED + "[!] error allocating memory at 0x%08x" % (address,) + colorama.Fore.RESET
+		#print colorama.Fore.RED + "\n[!] error allocating memory at 0x%08x" % (address,) + colorama.Fore.RESET,
 		pass
 
 	def save(self, addr, val):
@@ -233,14 +233,14 @@ class MCH:
 	def allocate(self, address):
 		region = address & 0xfffff000
 		if not region in self.allocated_regions:
-			print colorama.Fore.BLUE + "[*] allocate 0x%08x" % region + colorama.Fore.RESET
+			#print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
 			self.mu.mem_map( region, PAGE_SIZE )
 			self.allocated_regions.add( region )
 
 	def free(self):
 		for region in self.allocated_regions:
 			self.mu.mem_unmap(region, PAGE_SIZE)
-			print colorama.Fore.BLUE + "[*] free 0x%08x" % (region,) + colorama.Fore.RESET
+			print colorama.Fore.BLUE + "\n[*] free 0x%08x" % (region,) + colorama.Fore.RESET,
 			self.allocated_regions.remove(region)
 
 
@@ -302,6 +302,8 @@ class Trace:
 		self.io = MCH()
 		self.cpu.cache = self.io.cache = Cache()
 		self.io.ram = RAM()
+		self.breakpoints = set()
+		self.callstack = {}
 
 	def step(self):
 		'''
@@ -352,16 +354,30 @@ class Trace:
 		'''
 		self.step()
 
+		if self.cpu.eip_before in self.breakpoints:
+			print "\n[*] 0x%08x: %s   EAX=%d" % (self.cpu.eip_before, self.cpu.instruction, self.cpu.eax_before)
+			print "\n".join( map( hex, self.callstack[ self.cpu.thread_id ] ) )
+
 		if self.cpu.takt and not self.cpu.takt % 1000:
 			stdout.write("\r" + " "*75)
 			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.instruction) + colorama.Fore.RESET )
 			stdout.flush()
 			
 		if self.cpu.instruction.split()[0] in ('ret', 'call', 'int') or self.cpu.instruction.split()[0].startswith('j'):
-			return False
+			if self.cpu.instruction.split()[0] == 'call':
+				try:
+					self.callstack[ self.cpu.thread_id ].insert(0, self.cpu.eip_before)
+				except:
+					self.callstack[ self.cpu.thread_id ] = [ self.cpu.eip_before ]
+			elif self.cpu.instruction.split()[0] == 'ret':
+				try:
+					self.callstack[ self.cpu.thread_id ].pop(0)
+				except:
+					pass
+			return
 
 		if self.cpu.instruction.split()[0] == 'sysenter':
-			print colorama.Fore.CYAN + "[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET
+			print colorama.Fore.CYAN + "\n[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET,
 
 		self.io.save(self.cpu.eip_before, self.cpu.opcode)
 		self.io.readed_cells = set()
