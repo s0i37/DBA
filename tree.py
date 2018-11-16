@@ -1,5 +1,6 @@
 #!/usr/bin/python
 from sys import argv
+from os import path
 from capstone import *
 import sqlite3
 
@@ -20,6 +21,9 @@ def try_ascii(hexstr):
 md = Cs(CS_ARCH_X86, CS_MODE_32)
 md.detail = True
 trace_file = argv[1]
+modules = {}
+functions = {}
+
 symbols = {}
 
 if len(argv) > 2:
@@ -41,23 +45,54 @@ def get_symbol(eip):
 			return symbol,args
 	return (None,0)
 
+def get_relative(addr):
+	for module_name,module_range in modules.items():
+		low,high = module_range
+		if low <= addr <= high:
+			return module_name, addr - low
+	return (None,0)
+
+def get_func_name(addr):
+	for func_addr,func_name in functions.items():
+		if func_addr == addr:
+			return func_name
+
+def meta(line):
+	if line.startswith('[*] module'):
+		_, _, low, high, module = line.split()
+		low = int(low, 16)
+		high = int(high, 16)
+		modules[ path.basename(module) ] = (low, high)
+
+	elif line.startswith('[*] function'):
+		_, _, func, addr = line.split()
+		addr = int(addr, 16)
+		functions[addr] = func
+
 execs = 0
 threads = {}
 with open(trace_file) as f:
 	for line in f:
 		inst = None
+		if line.startswith('['):
+			meta(line)
+			continue
+		if line.find('{') == -1:
+			continue
 		try:
 			execs += 1
-			eip_thr, opcodes, REGS = line.split()
-			eip = int( eip_thr[:10], 16 )
-			thr = int( eip_thr[11:] )
+			count_eip_thr, opcodes, REGS = line.split()
+			count,eip,thr = count_eip_thr.split(':')
+			eip = int(eip, 16)
+			thr = int(thr, 16)
 			opcodes = opcodes[1:-1]
-			if eip >= 0x80000000:
-				continue
+			#if eip >= 0x80000000:
+			#	continue
 			for inst in md.disasm( opcodes.decode('hex'), eip ):
 				break
 		except Exception as e:
-			continue
+			#print line
+			pass
 
 		if not inst:
 			continue
@@ -67,8 +102,19 @@ with open(trace_file) as f:
 		if not threads[thr]['called']:
 			( threads[thr]['called'], args_count ) = get_symbol(eip)
 			if not threads[thr]['called']:
-				threads[thr]['called'] = "0x%08x"%eip
-			print "%d:%d" % (threads[thr]['deep'], thr) + " "*threads[thr]['deep'] + threads[thr]['called'] + '(' + ','.join( threads[thr]['args'][1:args_count] ) + ')'
+				threads[thr]['called'] = eip
+
+			addr = threads[thr]['called']
+			func_name = get_func_name(addr)
+			if func_name:
+				func = func_name
+			else:
+				module,addr = get_relative(addr)
+				if module:
+					func = "%s+0x%x" % (module, addr)
+				else:
+					func = "0x%x" % threads[thr]['called']
+			print "%d:%d" % (threads[thr]['deep'], thr) + " "*threads[thr]['deep'] + func + '(' + ','.join( threads[thr]['args'][1:args_count] ) + ')'
 
 		if inst.mnemonic == 'call':
 			threads[thr]['called'] = None
