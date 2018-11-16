@@ -1,3 +1,4 @@
+#!/usr/bin/python
 from sys import argv, stdout
 from capstone import *
 from bisect import bisect_left,insort_left
