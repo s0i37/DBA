@@ -314,6 +314,9 @@ class Trace:
 			if self.trace.tell() == self.eof_trace:
 				raise StopExecution
 			line = self.trace.readline()
+			if line.startswith('['):
+				self.trace.seek(-len(line), 1)
+				break
 			if line.find('{') != -1:
 				if was_instruction_load:
 					self.trace.seek(-len(line), 1)
