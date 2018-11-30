@@ -5,7 +5,7 @@ from capstone import *
 import sqlite3
 
 if len(argv) < 2:
-	print "%s trace.txt [symbols.db]" % argv[0]
+	print "%s trace.txt symbols.txt" % argv[0]
 	exit()
 
 def try_ascii(hexstr):
@@ -27,29 +27,26 @@ functions = {}
 symbols = {}
 
 if len(argv) > 2:
-	symbols_db = argv[2]
-	db = sqlite3.connect(symbols_db)
-	sql = db.cursor()
+	with open( argv[2] ) as f:
+		for line in f:
+			(symbol,start,end) = line.split()
+			start = int(start, 16)
+			end = int(end, 16)
+			symbols[symbol] = ( [start, end], 0 )  # start, end, args_count
 
-	for symbol,start,end,args in sql.execute("select symbol,start,end,args from symbols"):
-		symbols[symbol] = (
-			[ int(start), int(end) ],
-			args
-		)
-	db.close()
 
 def get_symbol(eip):
 	for symbol in symbols.keys():
-		(bounds,args) = symbols[symbol]
-		if bounds[0] <= eip <= bounds[1]:
+		(ranges,args) = symbols[symbol]
+		if ranges[0] <= eip <= ranges[1]:
 			return symbol,args
 	return (None,0)
 
 def get_relative(addr):
 	for module_name,module_range in modules.items():
-		low,high = module_range
-		if low <= addr <= high:
-			return module_name, addr - low
+		start,end = module_range
+		if start <= addr <= end:
+			return module_name, addr - start
 	return (None,0)
 
 def get_func_name(addr):
@@ -59,14 +56,14 @@ def get_func_name(addr):
 
 def meta(line):
 	if line.startswith('[*] module'):
-		_, _, low, high, module = line.split()
-		low = int(low, 16)
-		high = int(high, 16)
-		modules[ path.basename(module) ] = (low, high)
+		(_, _, module, start, end)  = line.split()
+		start = int(start, 16)
+		end = int(end, 16)
+		modules[ path.basename(module) ] = (start, end)
 
 	elif line.startswith('[*] function'):
-		_, _, func, addr = line.split()
-		addr = int(addr, 16)
+		(_, _, func, start, end) = line.split()
+		addr = int(start, 16)
 		functions[addr] = func
 
 execs = 0
@@ -113,8 +110,8 @@ with open(trace_file) as f:
 				if module:
 					func = "%s+0x%x" % (module, addr)
 				else:
-					func = "0x%x" % threads[thr]['called']
-			print "%d:%d" % (threads[thr]['deep'], thr) + " "*threads[thr]['deep'] + func + '(' + ','.join( threads[thr]['args'][1:args_count] ) + ')'
+					func = "%s" % threads[thr]['called']
+			print "%d:%d" % (threads[thr]['deep'], thr) + " "*threads[thr]['deep'] + func + '(' + ','.join( threads[thr]['args'][0:args_count] ) + ')'
 
 		if inst.mnemonic == 'call':
 			threads[thr]['called'] = None

@@ -1,10 +1,10 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 from PIL import Image, ImageDraw, ImageFont
 from random import random
 from sys import argv,stdout
 import argparse
 import os
-import csv
 from colorama import Fore
 
 WIDTH = 4096
@@ -14,40 +14,59 @@ MARGIN = 10
 modules = {}
 symbols = {}
 
+eip_min = None
+eip_max = None
+
 parser = argparse.ArgumentParser( description='execution trace visualization tool' )
-parser.add_argument("tracefile", type=str, help="trace.txt")
-parser.add_argument("symbols", nargs='?', default='', help="symbols.csv")
+parser.add_argument("output", type=str, default='out.png', help="out.png")
+
+parser.add_argument("-exec", dest="trace_file", type=str, default='', help="trace.txt")
+parser.add_argument("-symbols", type=str, default='', help="symbols.txt")
+
 parser.add_argument("-from_addr", type=int, default=0, help="from address")
 parser.add_argument("-to_addr", type=int, default=0, help="to address")
-parser.add_argument("-modules", nargs="+", help="draw only specified modules")
+parser.add_argument("-module", type=str, default='', help="draw just module")
+#parser.add_argument("-symbol", type=str, default='', help="draw just symbol (not implemented)")
 parser.add_argument("-from_takt", type=int, default=0, help="from takt")
 parser.add_argument("-to_takt", type=int, default=0, help="to takt")
 args = parser.parse_args()
 
 
+# load symbols
 if os.path.isfile(args.symbols):
-	for (modulename, symbol, start, end, nargs) in csv.reader( open(args.symbols, 'r'), delimiter=',' ):
-		start = int(start, 16)
-		end = int(end, 16)
-		symbols[symbol] = [start, end]
-		if modules.get(modulename):
-			if start < modules[modulename][0]:
-				modules[modulename][0] = start
-			if end > modules[modulename][1]:
-				modules[modulename][1] = end
-		else:
-			modules[modulename] = [start, end]
+	with open(args.symbols) as f:
+		for line in f:
+			(symbol, start, end) = line.split()
+			start = int(start, 16)
+			end = int(end, 16)
+			symbols[symbol] = [start, end]
+			eip_min = start if start < eip_min else eip_min
+			eip_max = start if start > eip_max else eip_max
+
+#		if modules.get(modulename):
+#			if start < modules[modulename][0]:
+#				modules[modulename][0] = start
+#			if end > modules[modulename][1]:
+#				modules[modulename][1] = end
+#		else:
+#			modules[modulename] = [start, end]
 
 for (modulename,_range) in modules.items():
 	print Fore.LIGHTBLACK_EX + "%s 0x%08x 0x%08x" % (modulename, _range[0], _range[1]) + Fore.RESET
 
-img = Image.new( 'RGB', (WIDTH,HEIGHT), "white" )
-draw = ImageDraw.Draw(img)
-pixels = img.load()
+if os.path.isfile(args.output):
+	img = Image.open(args.output)
+	draw = ImageDraw.Draw( img.convert("RGB") )
+	pixels = img.load()
+else:
+	img = Image.new('RGB', (WIDTH,HEIGHT), "white")
+	draw = ImageDraw.Draw(img)
+	pixels = img.load()
         
+#for performance reason
+last_module = {}
+last_symbol = {}
 
-module = {}
-symbol = {}
 modules_used = {}
 symbols_used = {}
 
@@ -68,30 +87,28 @@ def get_symbol(eip):
 	return {}
 
 def whereis(eip):
-	global module, symbol, modules_used, symbols_used
-	if not ( module and module['start'] <= eip <= module['end'] ):
-		module = get_module(eip)
-		if args.modules and module and not module['name'] in args.modules:
+	global last_module, last_symbol, modules_used, symbols_used
+	if not ( last_module and last_module['start'] <= eip <= last_module['end'] ):
+		last_module = get_module(eip)
+		if args.module and last_module and not args.module in last_module['name']:
 			return ({},{})
 
-		if module and not module['name'] in modules_used.keys():
-			modules_used[ module['name'] ] = [ module['start'], module['end'] ]
+		if last_module and not last_module['name'] in modules_used.keys():
+			modules_used[ last_module['name'] ] = [ last_module['start'], last_module['end'] ]
 
-	if not symbol or symbol['start'] > eip or eip > symbol['end']:
-		symbol = get_symbol(eip)
-		if symbol and not symbol['name'] in symbols_used.keys():
-			symbols_used[ symbol['name'] ] = [ symbol['start'], symbol['end'] ]
-	return (module,symbol)
+	if not last_symbol or last_symbol['start'] > eip or eip > last_symbol['end']:
+		last_symbol = get_symbol(eip)
+		if last_symbol and not last_symbol['name'] in symbols_used.keys():
+			symbols_used[ last_symbol['name'] ] = [ last_symbol['start'], last_symbol['end'] ]
+	return (last_module,last_symbol)
 
 eips = []
-eip_min = None
-eip_max = None
-def save_exec_ptr(eip):
+def save_eip(eip):
 	global eips, eip_min, eip_max
 	if (args.from_addr == 0 and args.to_addr == 0) or args.from_addr <= eip <= args.to_addr:
 		if args.from_takt == 0 or args.from_takt <= takt:
 			(module,symbol) = whereis(eip)
-			if not args.modules or module.get('name') in args.modules:
+			if not args.module or args.module in module.get('name',''):
 				eips.append(eip)
 				if not eip_min or eip < eip_min:
 					eip_min = eip
@@ -142,7 +159,7 @@ def save_wmem_ptr(memory):
 stack = []
 stack_min = None
 stack_max = None
-def save_stack_ptr(esp):
+def save_esp(esp):
 	global stack, stack_min, stack_max
 	if args.from_addr == 0 and args.to_addr == 0 or args.from_addr <= esp <= args.to_addr:
 		if args.from_takt == 0 or args.from_takt <= takt:
@@ -164,55 +181,80 @@ memop_r_covered = 0
 memop_w = 0
 memop_w_covered = 0
 
-with open( args.tracefile ) as f:
-	for line in f:
-		try:
-			if line.find('{') != -1:
-				(eip,opcode,regs) = line.split()
-				takt = int( eip.split(':')[0] )
-				(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
-				(eax,ecx,edx,ebx,esp,ebp,esi,edi) = map( lambda x: int(x,16), regs.split(',') )
-				memory = None
-			elif line.find('[') != -1:
-				(eip,memory,direction,value) = line.split()
-				takt = int( eip.split(':')[0] )
-				(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
-				memory = int( memory[1:-1], 16 )
-				value = int( value, 16 )
-				opcode = None
-				if direction == "->":
-					memop_r += 1
-				elif direction == "<-":
-					memop_w += 1
-			else:
+#load trace
+if os.path.isfile(args.trace_file):
+	with open( args.trace_file ) as f:
+		for line in f:
+			try:
+				#comment found
+				if line.startswith('[#]'):
+					continue
+				#module found
+				elif line.startswith('[*] module'):
+					(_, _, modulename, start, end) = line.split()
+					start = int(start, 16)
+					end = int(end, 16)
+					modules[modulename] = [start, end]
+					print "[*] %s 0x%08x 0x%08x" % (modulename, start, end)
+					continue
+				#symbol found
+				elif line.startswith('[*] function'):
+					(_, _, symbol, start, end) = line.split()
+					start = int(start, 16)
+					end = int(end, 16)
+					symbols[symbol] = [start, end]
+					continue
+				#instruction found
+				elif line.find('{') != -1:
+					(eip,opcode,regs) = line.split()
+					takt = int( eip.split(':')[0] )
+					(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
+					(eax,ecx,edx,ebx,esp,ebp,esi,edi) = map( lambda x: int(x,16), regs.split(',') )
+					memory = None
+				#memory found
+				elif line.find('[') != -1:
+					(eip,memory,direction,value) = line.split()
+					takt = int( eip.split(':')[0] )
+					(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
+					memory = int( memory[1:-1], 16 )
+					value = int( value, 16 )
+					opcode = None
+					if direction == "->":
+						memop_r += 1
+					elif direction == "<-":
+						memop_w += 1
+				#nothing
+				else:
+					continue
+			except Exception as e:
 				continue
-		except Exception as e:
-			continue
 
-		if opcode:
-			if save_exec_ptr(eip):
-				instr += 1
-			save_stack_ptr(esp)
-		elif memory != None:
-			if direction == "<-" and save_wmem_ptr(memory):
-				memop_w_covered += 1
-			elif direction == "->" and save_rmem_ptr(memory):
-				memop_r_covered += 1
-	
-		if args.to_takt and takt > args.to_takt:
-			break		
+			if opcode:
+				if save_eip(eip):
+					instr += 1
+				save_esp(esp)
+			elif memory != None:
+				if direction == "<-" and save_wmem_ptr(memory):
+					memop_w_covered += 1
+				elif direction == "->" and save_rmem_ptr(memory):
+					memop_r_covered += 1
+		
+			if args.to_takt and takt > args.to_takt:
+				break		
 
-		if takt and takt % 10000 == 0:
-			stdout.write( "\rx:%d/%d (r:%d/%d, w:%d/%d) %s %s" % ( instr, takt, memop_r_covered, memop_r, memop_w_covered, memop_w, module.get('name') or '', symbol.get('name') or '' ) )
-			stdout.flush()
+			if takt and takt % 10000 == 0:
+				stdout.write( "\rx:%d/%d, r:%d/%d, w:%d/%d %s %s" % ( instr, takt, memop_r_covered, memop_r, memop_w_covered, memop_w, last_module.get('name') or '', last_symbol.get('name') or '' ) )
+				stdout.flush()
 
-if eip_min == None and wmem_min == None and stack_min == None:
-	print "no eip, wmem and stack"
-	exit()
+'''if eip_min == None and wmem_min == None and stack_min == None:
+	print "no instructions, writed memory and stack usage"
+	exit()'''
 
-if args.modules:
-	min_addr = min( map( lambda m: modules[m][0], args.modules) )
-	max_addr = max( map( lambda m: modules[m][1], args.modules) )
+if args.module:
+	for module,ranges in modules.items():
+		if args.module in module:
+			(min_addr,max_addr) = ranges
+			break
 else:
 	min_addr = min( filter( lambda p: p != None, [eip_min, wmem_min, stack_min] ) )
 	max_addr = max( filter( lambda p: p != None, [eip_max, wmem_max, stack_max] ) )
@@ -226,7 +268,7 @@ for modulename, _range in modules_used.items():
 	low = int( (start-min_addr)/y_scale ) + MARGIN
 	high = int( (end-min_addr)/y_scale ) + MARGIN
 	draw.rectangle( ( ( 0, low ), ( WIDTH, high ) ), fill=( 0, 200, 200+int(random()*(0xff-200)) ) )
-	draw.text( (0, low ), modulename, 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
+	draw.text( (0, low ), modulename, 'grey', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
 
 if len( modules_used.keys() ) == 1:
 	for symbolname, _range in symbols_used.items():
@@ -234,7 +276,7 @@ if len( modules_used.keys() ) == 1:
 		low = int( (start-min_addr)/y_scale ) + MARGIN
 		high = int( (end-min_addr)/y_scale ) + MARGIN
 		draw.rectangle( ( ( 0, low ), ( WIDTH, high ) ), fill=( 0, 200+int(random()*(0xff-200)), 200 ) )
-		draw.text( (0, low ), symbolname, 'black', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
+		draw.text( (0, low ), symbolname, 'blue', font=ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 12))
 
 for _takt in xrange( args.from_takt, takt, (takt - args.from_takt)/10 ):
 	border = int((_takt-args.from_takt)/x_scale) + MARGIN
@@ -294,4 +336,23 @@ for sp in stack:
 	except Exception as e:
 		pass
 
-img.save('out.png')
+img.save( args.output )
+
+
+'''
+TODO:
+довнесение изменений в картинку.
+!the problem: 
+	при догрузке трассы/символов меняется масштаб, т.к. он считается по количеству тактов и диапазону адресов.
+	в результате при не стыковке масштабов слои наедут криво
+
+diff трасс (только при покрытии модулей т.к. ASLR):
+	./map.py -module prog.exe -exec trace1.txt map.png 		- относительное покрытие первой трассы
+	./map.py -module prog.exe -exec trace2.txt map.png 		- относительное покрытие второй трассы
+выделение taint данных:
+	./map.py -exec taint.txt map.png 			- отметить на карте где исполнение с taint data
+подгрузить символы (from SBA) можно в любой момент:
+	./map.py -exec trace.txt -symbols symbols.txt map.png
+Т.о. можно достаточно точно определить где холостые участки кода, а где области памяти, оперирующие
+пользовательским вводом и их можно фаззить
+'''
