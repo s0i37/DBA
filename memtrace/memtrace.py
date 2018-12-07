@@ -1,3 +1,5 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
 from sys import argv
 import re
 import os
@@ -48,76 +50,73 @@ class Trace:
 def load_trace( trace_file ):
 	trace = Trace()
 
-	with open(trace_file, 'rb') as f:
-		for line in f.read().split("\r\n"):
-			if line.find("module") != -1:
-				m = re.match("[^\s]+ ([^\s]+) ([^\s]+) (.*)", line)
-				if m:
-					low_address, high_address, module = m.groups()
-					low_address = int( low_address[2:10], 16 )
-					high_address = int( high_address[2:10], 16 )
-					trace.modules[module] = (low_address,high_address)
-			elif line.find("alloc") != -1:
-				m = re.match('alloc\(([^)]*)\): (.*)', line)
-				if m:
-					size, region = m.groups()
-					size = int( size )
-					region = int( region[2:10], 16 )
-					if size > 0x10000:
-						continue
+	with open(trace_file) as f:
+		for line in f:
+			try:
+				if line.startswith('[#]'):
+					continue
+				elif line.startswith('[*] module'):
+					(_, _, modulename, start, end) = line.split()
+					start = int(start, 16)
+					end = int(end, 16)
+					trace.modules[modulename] = (start,end)
+				elif line.startswith('[*] function'):
+					(_, _, symbol, start, end) = line.split()
+					start = int(start, 16)
+					end = int(end, 16)
+				# will never happen
+				elif line.startswith('[*] allocation'):
+					region = 0
+					size = 0
 					trace.heap.add( (region, region+size) )
-			else:
-				m = re.match("^([^:]*): \(([^\)]+)\)\[([^\]]+)\] {([^}]+)}.*\(([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+)\)", line)
-				if m:
-					eip, number,threadid, opcodes, eax,edx,ecx,ebx,esi,edi,ebp,esp = m.groups()
-					eip = int( eip[2:10], 16 )
+				elif line.find('{') != -1:
+					(eip,opcode,regs) = line.split()
+					takt = int( eip.split(':')[0] )
+					(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
+					opcode = opcode[1:-1]
+					(eax,ecx,edx,ebx,esp,ebp,esi,edi) = map( lambda x: int(x,16), regs.split(',') )
 					try:
-						trace.code[eip].append( [ opcodes, (eax,edx,ecx,ebx,esi,edi,ebp,esp), (number,threadid), (), () ] )
+						trace.code[eip].append( [ opcode, (eax,edx,ecx,ebx,esi,edi,ebp,esp), (takt,thread), (), () ] )
 					except:
-						trace.code[eip] = [ [ opcodes, (eax,edx,ecx,ebx,esi,edi,ebp,esp), (number,threadid), (), () ] ]
-				if line.find("<-") != -1:
-					m = re.match('^([^:]*):.*\[([^]]*)\].*<- ([^\s]*).*\(([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+)\)', line)
-					if m:
-						eip, addr, value, eax,edx,ecx,ebx,esi,edi,ebp,esp = m.groups()
-						eip = int( eip[2:10], 16 )
-						addr = int( addr[2:10], 16 )
-						value = int( value[2:10], 16 )
-						trace.code[eip][-1:][0][4] = (addr,value)
-						try:	trace.memory_writes[addr].append( (eip,value) )
-						except:	trace.memory_writes[addr] = [ (eip,value) ]
-						trace.stack.add( int( esp[2:10], 16 ) & 0xfffff000 )
-				elif line.find("->") != -1:
-					m = re.match('^([^:]*):.*\[([^]]*)\]([^\s]*) ->.*\(([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+)\)', line)
-					if m:
-						eip, addr, value, eax,edx,ecx,ebx,esi,edi,ebp,esp = m.groups()
-						eip = int( eip[2:10], 16 )
-						addr = int( addr[2:10], 16 )
-						value = int( value[2:10], 16 )
-						trace.code[eip][-1:][0][3] = (addr,value)
-						try:	trace.memory_reads[addr].append( (eip,value) )
-						except:	trace.memory_reads[addr] = [ (eip,value) ]
-						trace.stack.add( int( esp[2:10], 16 ) & 0xfffff000 )
-				elif line.find("!!") != -1:
-					m = re.match( "^([^:]*):.*\(([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+) ([^\s]+)\)", line )
-					if m:
-						eip, eax,edx,ecx,ebx,esi,edi,ebp,esp = m.groups()
-						syscall_number = int( eax[2:10], 16 )
-						syscall_stack = int( edx[2:10], 16 )
-						trace.syscalls.append( (syscall_number,syscall_stack) )
-
+						trace.code[eip] = [ [ opcode, (eax,edx,ecx,ebx,esi,edi,ebp,esp), (takt,thread), (), () ] ]
+				elif line.find('[') != -1:
+					(eip,memory,direction,value) = line.split()
+					takt = int( eip.split(':')[0] )
+					(eip,thread) = map( lambda x: int(x, 16), eip.split(':')[1:] )
+					memory = int( memory[1:-1], 16 )
+					value = int( value, 16 )
+					page = esp
+					page >>= 12
+					page <<= 12
+					if direction == "<-":
+						trace.code[eip][-1:][0][4] = (memory,value)
+						try:	trace.memory_writes[memory].append( (eip,value) )
+						except:	trace.memory_writes[memory] = [ (eip,value) ]
+						trace.stack.add(page)
+					elif direction == "->":
+						trace.code[eip][-1:][0][3] = (memory,value)
+						try:	trace.memory_reads[memory].append( (eip,value) )
+						except:	trace.memory_reads[memory] = [ (eip,value) ]
+						trace.stack.add(page)
+			except Exception as e:
+				#print str(e)
+				#print line
+				continue
 
 	addresses = trace.memory_writes.keys() + trace.memory_reads.keys()
 	addresses.sort()
 	for addr in addresses:
 		if addr >= max( trace.data_pages ) + WHITESPACE_PADDING_SIZE:
-			trace.data_pages.append( addr & (0x100000000 - WHITESPACE_PADDING_SIZE) )
+			addr //= WHITESPACE_PADDING_SIZE
+			trace.data_pages.append(addr * WHITESPACE_PADDING_SIZE)
 	trace.data_pages.pop(0)
 
 	eips = trace.code.keys()
 	eips.sort()
 	for eip in eips:
 		if eip >= max( trace.code_pages ) + WHITESPACE_PADDING_SIZE:
-			trace.code_pages.append( eip & (0x100000000 - WHITESPACE_PADDING_SIZE) )
+			eip //= WHITESPACE_PADDING_SIZE
+			trace.code_pages.append(eip * WHITESPACE_PADDING_SIZE)
 	trace.code_pages.pop(0)
 
 	return trace
@@ -146,38 +145,6 @@ def print_syscalls(trace):
 		print "syscall: %s 0x%04x 0x%08X" % ( SYSCALLS.NT32_windows_7_sp1[syscall_number], syscall_number, syscall_stack )
 
 
-
-
-
-
-def text_print():
-	trace = load_trace( trace_file )
-	val = ""
-	for page in data_pages:
-		print "page 0x%08x" % (page)
-		print ("0x%08x" % page) + ": ",
-		addr = page
-		while addr < page + 0x1000:		
-			if addr in memory_writes.keys():
-				val = "%08X" % memory_writes[addr]
-
-			if val:
-				if trace.in_heap(addr):
-					print ( "(%s)" % val[-2:] ),
-				else:
-					print val[-2:],
-				val = val[:-2]
-			else:
-				if trace.in_heap(addr):
-					print "(**)",
-				else:
-					print "**",
-
-			addr += 1
-			if not addr % 0x10:
-				print ""
-				print ("0x%08x" % addr) + ": ",
-		print "\n"
 
 def html_print(trace_file):
 	trace = load_trace( trace_file )
@@ -273,7 +240,7 @@ def html_print(trace_file):
 				w_ops = []
 				rw_addr = 0
 				executions = 0
-				for opcodes, regs, opts, mem_r, mem_w in trace.code[eip]:
+				for opcode, regs, opts, mem_r, mem_w in trace.code[eip]:
 					executions += 1
 					eax,edx,ecx,ebx,esi,edi,ebp,esp = regs
 					number, threadid = opts
@@ -285,9 +252,9 @@ def html_print(trace_file):
 						rw_addr,rw_val = mem_w
 						w_ops.append( "0x%08x:0x%08X" % (rw_addr, rw_val) )
 					disasm = '??'
-					opcode = opcodes[:2]
+					opcode = opcode[:2]
 					next_instruction_offset = 6
-					for instr in dis.disasm( opcodes.decode('hex'), eip ):
+					for instr in dis.disasm( opcode.decode('hex'), eip ):
 						disasm = "%(command)s %(operands)s" % { 'command': instr.mnemonic, 'operands': instr.op_str }
 						opcode = str(instr.bytes).encode('hex')
 						next_instruction_offset = len( instr.bytes )
@@ -315,3 +282,10 @@ print "<pre>"
 print "</pre>"
 html_print( trace_file )
 
+'''
+TODO:
+сделать поддержку экспорта символов
+значения памяти и адреса инструкций записывать в базу - т.к. даже для /bin/ls файл получается слишком большой.
+нужен маленький веб-сервер, который будет извлекать значения памяти и адреса инструкций из базы веб-странице.
++сервер можно реализовать прямо в memtrace.py
+'''
