@@ -6,12 +6,12 @@ import struct
 import string
 import colorama
 
-__version__ = '0.13'
+__version__ = '0.14'
 
 PAGE_SIZE = 0x1000
 
-mu = Uc(UC_ARCH_X86, UC_MODE_32)
-md = Cs(CS_ARCH_X86, CS_MODE_32)
+mu = Uc(UC_ARCH_X86, UC_MODE_64)
+md = Cs(CS_ARCH_X86, CS_MODE_64)
 
 
 class StopExecution(BaseException):
@@ -92,22 +92,22 @@ class CPU:
 	@staticmethod
 	def get_full_register(register):
 		register = register.lower()
-		if register in ('eax', 'ax', 'ah', 'al'):
-			return 'eax'
-		elif register in ('ecx', 'cx', 'ch', 'cl'):
-			return 'ecx'
-		elif register in ('edx', 'dx', 'dh', 'dl'):
-			return 'edx'
-		elif register in ('ebx', 'bx', 'bh', 'bl'):
-			return 'ebx'
-		elif register in ('esp', 'sp'):
-			return 'esp'
-		elif register in ('ebp', 'bp'):
-			return 'ebp'
-		elif register in ('esi', 'si'):
-			return 'esi'
-		elif register in ('edi', 'di'):
-			return 'edi'
+		if register in ('rax', 'eax', 'ax', 'ah', 'al'):
+			return 'rax'
+		elif register in ('rcx', 'ecx', 'cx', 'ch', 'cl'):
+			return 'rcx'
+		elif register in ('rdx', 'edx', 'dx', 'dh', 'dl'):
+			return 'rdx'
+		elif register in ('rbx', 'ebx', 'bx', 'bh', 'bl'):
+			return 'rbx'
+		elif register in ('rsp', 'esp', 'sp'):
+			return 'rsp'
+		elif register in ('rbp', 'ebp', 'bp'):
+			return 'rbp'
+		elif register in ('rsi', 'esi', 'si'):
+			return 'rsi'
+		elif register in ('rdi', 'edi', 'di'):
+			return 'rdi'
 		else:
 			return ''
 
@@ -127,6 +127,7 @@ class CPU:
 	def execute(self):	
 		max_attempts = 5
 		try:
+			'''
 			self.mu.reg_write(UC_X86_REG_EAX, self.eax_before)
 			self.mu.reg_write(UC_X86_REG_ECX, self.ecx_before)
 			self.mu.reg_write(UC_X86_REG_EDX, self.edx_before)
@@ -135,8 +136,18 @@ class CPU:
 			self.mu.reg_write(UC_X86_REG_EBP, self.ebp_before)
 			self.mu.reg_write(UC_X86_REG_ESI, self.esi_before)
 			self.mu.reg_write(UC_X86_REG_EDI, self.edi_before)
+			'''
+			self.mu.reg_write(UC_X86_REG_RAX, self.eax_before)
+			self.mu.reg_write(UC_X86_REG_RCX, self.ecx_before)
+			self.mu.reg_write(UC_X86_REG_RDX, self.edx_before)
+			self.mu.reg_write(UC_X86_REG_RBX, self.ebx_before)
+			self.mu.reg_write(UC_X86_REG_RSP, self.esp_before)
+			self.mu.reg_write(UC_X86_REG_RBP, self.ebp_before)
+			self.mu.reg_write(UC_X86_REG_RSI, self.esi_before)
+			self.mu.reg_write(UC_X86_REG_RDI, self.edi_before)
 			self.mu.emu_start(self.eip_before, 0, 0, 1)
 			self.mu.emu_stop()
+			'''
 			self.eax_after = self.mu.reg_read(UC_X86_REG_EAX)
 			self.ecx_after = self.mu.reg_read(UC_X86_REG_ECX)
 			self.edx_after = self.mu.reg_read(UC_X86_REG_EDX)
@@ -146,6 +157,16 @@ class CPU:
 			self.esi_after = self.mu.reg_read(UC_X86_REG_ESI)
 			self.edi_after = self.mu.reg_read(UC_X86_REG_EDI)
 			self.eip_after = self.mu.reg_read(UC_X86_REG_EIP)
+			'''
+			self.eax_after = self.mu.reg_read(UC_X86_REG_RAX)
+			self.ecx_after = self.mu.reg_read(UC_X86_REG_RCX)
+			self.edx_after = self.mu.reg_read(UC_X86_REG_RDX)
+			self.ebx_after = self.mu.reg_read(UC_X86_REG_RBX)
+			self.esp_after = self.mu.reg_read(UC_X86_REG_RSP)
+			self.ebp_after = self.mu.reg_read(UC_X86_REG_RBP)
+			self.esi_after = self.mu.reg_read(UC_X86_REG_RSI)
+			self.edi_after = self.mu.reg_read(UC_X86_REG_RDI)
+			self.eip_after = self.mu.reg_read(UC_X86_REG_RIP)
 			self.exception = False
 		except Exception as e:
 			self.mu.emu_stop()
@@ -224,14 +245,19 @@ class MCH:
 		pass
 
 	def save(self, addr, val):
-		if not ( addr + len(val) ) & 0xfffff000 in self.allocated_regions:
+		high_region = ( addr + len(val) ) >> 12
+		high_region <<= 12
+		low_region = addr >> 12
+		low_region <<= 12
+		if not high_region in self.allocated_regions:
 			self.allocate(addr + len(val))
-		if not addr & 0xfffff000 in self.allocated_regions:
+		if not low_region in self.allocated_regions:
 			self.allocate(addr)
 		self.mu.mem_write(addr, val)
 
 	def allocate(self, address):
-		region = address & 0xfffff000
+		region = address >> 12
+		region <<= 12
 		if not region in self.allocated_regions:
 			#print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
 			self.mu.mem_map( region, PAGE_SIZE )
@@ -314,19 +340,26 @@ class Trace:
 			if self.trace.tell() == self.eof_trace:
 				raise StopExecution
 			line = self.trace.readline()
-			if line.startswith('['):
-				self.trace.seek(-len(line), 1)
-				break
-			if line.find('{') != -1:
-				if was_instruction_load:
-					self.trace.seek(-len(line), 1)
-					break
-				self.cpu.set_state(line)
-				was_instruction_load = True
-			elif line.find('[0x') != -1:
-				self.io.save_state(line)
-			else:
-				continue
+			try:
+				if line.startswith('[#]'):
+					#self.trace.seek(-len(line), 1)
+					continue
+				elif line.startswith('[*]'):
+					#self.trace.seek(-len(line), 1)
+					continue
+				elif line.find('{') != -1:
+					if was_instruction_load:
+						self.trace.seek(-len(line), 1)
+						break
+					self.cpu.set_state(line)
+					was_instruction_load = True
+				elif line.find('[0x') != -1:
+					self.io.save_state(line)
+				else:
+					continue
+			except:
+				#print line
+				pass
 
 		self.cpu.instruction = self.cpu.disas()
 
