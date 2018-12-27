@@ -54,14 +54,9 @@ if os.path.isfile(args.symbols):
 for (modulename,_range) in modules.items():
 	print Fore.LIGHTBLACK_EX + "%s 0x%08x 0x%08x" % (modulename, _range[0], _range[1]) + Fore.RESET
 
-if os.path.isfile(args.output):
-	img = Image.open(args.output)
-	draw = ImageDraw.Draw( img.convert("RGB") )
-	pixels = img.load()
-else:
-	img = Image.new('RGB', (WIDTH,HEIGHT), "white")
-	draw = ImageDraw.Draw(img)
-	pixels = img.load()
+img = Image.new('RGB', (WIDTH,HEIGHT), "white")
+draw = ImageDraw.Draw(img)
+pixels = img.load()
         
 #for performance reason
 last_module = {}
@@ -124,15 +119,19 @@ rmem_min = None
 rmem_max = None
 def save_rmem_ptr(memory):
 	global rmems, rmem_min, rmem_max
-	if args.from_addr == 0 and args.to_addr == 0 or args.from_addr <= memory <= args.to_addr:
+	if (args.from_addr == 0 and args.to_addr == 0) or args.from_addr <= memory <= args.to_addr:
 		if args.from_takt == 0 or args.from_takt <= takt:
-			if memory != None and direction == '->':
-				rmems.append(memory)
-				if not rmem_min or memory < rmem_min:
-					rmem_min = memory
-				if not rmem_max or memory > rmem_max:
-					rmem_max = memory
-				return True
+			(module,symbol) = whereis(eip)
+			if not args.module or args.module in module.get('name',''):
+				if memory != None and direction == '->':
+					rmems.append(memory)
+					if not rmem_min or memory < rmem_min:
+						rmem_min = memory
+					if not rmem_max or memory > rmem_max:
+						rmem_max = memory
+					return True
+				else:
+					rmems.append(None)
 			else:
 				rmems.append(None)
 	return False
@@ -142,15 +141,19 @@ wmem_min = None
 wmem_max = None
 def save_wmem_ptr(memory):
 	global wmems, wmem_min, wmem_max
-	if args.from_addr == 0 and args.to_addr == 0 or args.from_addr <= memory <= args.to_addr:
+	if (args.from_addr == 0 and args.to_addr == 0) or args.from_addr <= memory <= args.to_addr:
 		if args.from_takt == 0 or args.from_takt <= takt:
-			if memory != None and direction == '<-':
-				wmems.append(memory)
-				if not wmem_min or memory < wmem_min:
-					wmem_min = memory
-				if not wmem_max or memory > wmem_max:
-					wmem_max = memory
-				return True
+			(module,symbol) = whereis(eip)
+			if not args.module or args.module in module.get('name',''):
+				if memory != None and direction == '<-':
+					wmems.append(memory)
+					if not wmem_min or memory < wmem_min:
+						wmem_min = memory
+					if not wmem_max or memory > wmem_max:
+						wmem_max = memory
+					return True
+				else:
+					wmems.append(None)
 			else:
 				wmems.append(None)
 	return False
@@ -340,19 +343,6 @@ img.save( args.output )
 
 
 '''
-TODO:
-довнесение изменений в картинку.
-!the problem: 
-	при догрузке трассы/символов меняется масштаб, т.к. он считается по количеству тактов и диапазону адресов.
-	в результате при не стыковке масштабов слои наедут криво
-
-diff трасс (только при покрытии модулей т.к. ASLR):
-	./map.py -module prog.exe -exec trace1.txt map.png 		- относительное покрытие первой трассы
-	./map.py -module prog.exe -exec trace2.txt map.png 		- относительное покрытие второй трассы
-выделение taint данных:
-	./map.py -exec taint.txt map.png 			- отметить на карте где исполнение с taint data
-подгрузить символы (from SBA) можно в любой момент:
-	./map.py -exec trace.txt -symbols symbols.txt map.png
-Т.о. можно достаточно точно определить где холостые участки кода, а где области памяти, оперирующие
-пользовательским вводом и их можно фаззить
+!the problem:
+	eips - узкое место. Если инструкций будет 100М то памяти не хватит
 '''
