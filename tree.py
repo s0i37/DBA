@@ -78,14 +78,14 @@ with open(trace_file) as f:
 			continue
 		try:
 			execs += 1
-			count_eip_thr, opcodes, REGS = line.split()
+			count_eip_thr, opcode, REGS = line.split()
 			count,eip,thr = count_eip_thr.split(':')
 			eip = int(eip, 16)
 			thr = int(thr, 16)
-			opcodes = opcodes[1:-1]
+			opcode = opcode[1:-1]
 			#if eip >= 0x80000000:
 			#	continue
-			for inst in md.disasm( opcodes.decode('hex'), eip ):
+			for inst in md.disasm( opcode.decode('hex'), eip ):
 				break
 		except Exception as e:
 			#print line
