@@ -118,7 +118,8 @@ if not tainted_mems and tainted_regs:
 taint_no = 0
 with Trace( open(args.tracefile) ) as trace:
 	while True:
-		info = trace.instruction() # 5 time faster
+		#info = trace.instruction() # 5 time faster, but no trace.cpu.REG_after value
+		info = trace.execute() # more right way, but more slower
 		if not info:
 			continue
 
@@ -131,7 +132,7 @@ with Trace( open(args.tracefile) ) as trace:
 					if args.limit == 0 or args.limit >= taint_no:
 						print colorama.Fore.LIGHTGREEN_EX + "[+] %d:%d:0x%08x: %s;" % (taint_no, trace.cpu.takt, trace.cpu.eip_before, trace.cpu.instruction) + colorama.Fore.GREEN,
 						for taint_reg in taint_regs:
-							print " %s=0x%08x," % ( taint_reg, trace.cpu.get(taint_reg) ),
+							print " %s=0x%08x," % ( taint_reg, trace.cpu.get(taint_reg, when='after') ),
 						for taint_mem in taint_mems:
 							print " 0x%08x -> 0x%08x," % ( taint_mem, trace.io.ram.get_dword(taint_mem) ),
 						print colorama.Fore.RESET
