@@ -9,9 +9,11 @@ import colorama
 __version__ = '0.14'
 
 PAGE_SIZE = 0x1000
+BITS = 32
+#BITS = 64
 
-mu = Uc(UC_ARCH_X86, UC_MODE_64)
-md = Cs(CS_ARCH_X86, CS_MODE_64)
+mu = Uc( UC_ARCH_X86, {32: UC_MODE_32, 64: UC_MODE_64}[BITS] )
+md = Cs( CS_ARCH_X86, {32: CS_MODE_32, 64: CS_MODE_64}[BITS] )
 
 
 class StopExecution(BaseException):
@@ -93,21 +95,21 @@ class CPU:
 	def get_full_register(register):
 		register = register.lower()
 		if register in ('rax', 'eax', 'ax', 'ah', 'al'):
-			return 'rax'
+			return 'rax' if BITS == 64 else 'eax'
 		elif register in ('rcx', 'ecx', 'cx', 'ch', 'cl'):
-			return 'rcx'
+			return 'rcx' if BITS == 64 else 'ecx'
 		elif register in ('rdx', 'edx', 'dx', 'dh', 'dl'):
-			return 'rdx'
+			return 'rdx' if BITS == 64 else 'edx'
 		elif register in ('rbx', 'ebx', 'bx', 'bh', 'bl'):
-			return 'rbx'
+			return 'rbx' if BITS == 64 else 'ebx'
 		elif register in ('rsp', 'esp', 'sp'):
-			return 'rsp'
+			return 'rsp' if BITS == 64 else 'esp'
 		elif register in ('rbp', 'ebp', 'bp'):
-			return 'rbp'
+			return 'rbp' if BITS == 64 else 'ebp'
 		elif register in ('rsi', 'esi', 'si'):
-			return 'rsi'
+			return 'rsi' if BITS == 64 else 'esi'
 		elif register in ('rdi', 'edi', 'di'):
-			return 'rdi'
+			return 'rdi' if BITS == 64 else 'edi'
 		else:
 			return ''
 
@@ -127,46 +129,46 @@ class CPU:
 	def execute(self):	
 		max_attempts = 5
 		try:
-			'''
-			self.mu.reg_write(UC_X86_REG_EAX, self.eax_before)
-			self.mu.reg_write(UC_X86_REG_ECX, self.ecx_before)
-			self.mu.reg_write(UC_X86_REG_EDX, self.edx_before)
-			self.mu.reg_write(UC_X86_REG_EBX, self.ebx_before)
-			self.mu.reg_write(UC_X86_REG_ESP, self.esp_before)
-			self.mu.reg_write(UC_X86_REG_EBP, self.ebp_before)
-			self.mu.reg_write(UC_X86_REG_ESI, self.esi_before)
-			self.mu.reg_write(UC_X86_REG_EDI, self.edi_before)
-			'''
-			self.mu.reg_write(UC_X86_REG_RAX, self.eax_before)
-			self.mu.reg_write(UC_X86_REG_RCX, self.ecx_before)
-			self.mu.reg_write(UC_X86_REG_RDX, self.edx_before)
-			self.mu.reg_write(UC_X86_REG_RBX, self.ebx_before)
-			self.mu.reg_write(UC_X86_REG_RSP, self.esp_before)
-			self.mu.reg_write(UC_X86_REG_RBP, self.ebp_before)
-			self.mu.reg_write(UC_X86_REG_RSI, self.esi_before)
-			self.mu.reg_write(UC_X86_REG_RDI, self.edi_before)
+			if BITS == 32:
+				self.mu.reg_write(UC_X86_REG_EAX, self.eax_before)
+				self.mu.reg_write(UC_X86_REG_ECX, self.ecx_before)
+				self.mu.reg_write(UC_X86_REG_EDX, self.edx_before)
+				self.mu.reg_write(UC_X86_REG_EBX, self.ebx_before)
+				self.mu.reg_write(UC_X86_REG_ESP, self.esp_before)
+				self.mu.reg_write(UC_X86_REG_EBP, self.ebp_before)
+				self.mu.reg_write(UC_X86_REG_ESI, self.esi_before)
+				self.mu.reg_write(UC_X86_REG_EDI, self.edi_before)
+			if BITS == 64:
+				self.mu.reg_write(UC_X86_REG_RAX, self.eax_before)
+				self.mu.reg_write(UC_X86_REG_RCX, self.ecx_before)
+				self.mu.reg_write(UC_X86_REG_RDX, self.edx_before)
+				self.mu.reg_write(UC_X86_REG_RBX, self.ebx_before)
+				self.mu.reg_write(UC_X86_REG_RSP, self.esp_before)
+				self.mu.reg_write(UC_X86_REG_RBP, self.ebp_before)
+				self.mu.reg_write(UC_X86_REG_RSI, self.esi_before)
+				self.mu.reg_write(UC_X86_REG_RDI, self.edi_before)
 			self.mu.emu_start(self.eip_before, 0, 0, 1)
 			self.mu.emu_stop()
-			'''
-			self.eax_after = self.mu.reg_read(UC_X86_REG_EAX)
-			self.ecx_after = self.mu.reg_read(UC_X86_REG_ECX)
-			self.edx_after = self.mu.reg_read(UC_X86_REG_EDX)
-			self.ebx_after = self.mu.reg_read(UC_X86_REG_EBX)
-			self.esp_after = self.mu.reg_read(UC_X86_REG_ESP)
-			self.ebp_after = self.mu.reg_read(UC_X86_REG_EBP)
-			self.esi_after = self.mu.reg_read(UC_X86_REG_ESI)
-			self.edi_after = self.mu.reg_read(UC_X86_REG_EDI)
-			self.eip_after = self.mu.reg_read(UC_X86_REG_EIP)
-			'''
-			self.eax_after = self.mu.reg_read(UC_X86_REG_RAX)
-			self.ecx_after = self.mu.reg_read(UC_X86_REG_RCX)
-			self.edx_after = self.mu.reg_read(UC_X86_REG_RDX)
-			self.ebx_after = self.mu.reg_read(UC_X86_REG_RBX)
-			self.esp_after = self.mu.reg_read(UC_X86_REG_RSP)
-			self.ebp_after = self.mu.reg_read(UC_X86_REG_RBP)
-			self.esi_after = self.mu.reg_read(UC_X86_REG_RSI)
-			self.edi_after = self.mu.reg_read(UC_X86_REG_RDI)
-			self.eip_after = self.mu.reg_read(UC_X86_REG_RIP)
+			if BITS == 32:
+				self.eax_after = self.mu.reg_read(UC_X86_REG_EAX)
+				self.ecx_after = self.mu.reg_read(UC_X86_REG_ECX)
+				self.edx_after = self.mu.reg_read(UC_X86_REG_EDX)
+				self.ebx_after = self.mu.reg_read(UC_X86_REG_EBX)
+				self.esp_after = self.mu.reg_read(UC_X86_REG_ESP)
+				self.ebp_after = self.mu.reg_read(UC_X86_REG_EBP)
+				self.esi_after = self.mu.reg_read(UC_X86_REG_ESI)
+				self.edi_after = self.mu.reg_read(UC_X86_REG_EDI)
+				self.eip_after = self.mu.reg_read(UC_X86_REG_EIP)
+			if BITS == 64:
+				self.eax_after = self.mu.reg_read(UC_X86_REG_RAX)
+				self.ecx_after = self.mu.reg_read(UC_X86_REG_RCX)
+				self.edx_after = self.mu.reg_read(UC_X86_REG_RDX)
+				self.ebx_after = self.mu.reg_read(UC_X86_REG_RBX)
+				self.esp_after = self.mu.reg_read(UC_X86_REG_RSP)
+				self.ebp_after = self.mu.reg_read(UC_X86_REG_RBP)
+				self.esi_after = self.mu.reg_read(UC_X86_REG_RSI)
+				self.edi_after = self.mu.reg_read(UC_X86_REG_RDI)
+				self.eip_after = self.mu.reg_read(UC_X86_REG_RIP)
 			self.exception = False
 		except Exception as e:
 			self.mu.emu_stop()
@@ -385,6 +387,7 @@ class Trace:
 	def execute(self):
 		'''
 		emulate one instruction from trace
+		set self.cpu.REG_after
 
 		:return: (usable_registers, usable_memory)
 		'''
@@ -410,7 +413,7 @@ class Trace:
 					self.callstack[ self.cpu.thread_id ].pop(0)
 				except:
 					pass
-			return
+			return # problem with emulation call/jmp/ret/int instructions
 
 		if self.cpu.instruction.split()[0] == 'sysenter':
 			print colorama.Fore.CYAN + "\n[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET,
