@@ -80,9 +80,11 @@ class CPU:
 		self.thread_id = int( pc.split(':')[2], 16 )
 		self.opcode = opcode[1:-1].decode('hex')
 		(self.eax_before, self.ecx_before, self.edx_before, self.ebx_before, self.esp_before, self.ebp_before, self.esi_before, self.edi_before) = map( lambda v: int(v, 16), regs.split(',') )
+		self.eflags_before = 0 # not implemented yet
 
 	def get(self, regname, when='before'):
-		return self.__dict__.get( CPU.get_full_register(regname) + '_' + when ) or 0xffffffff
+		val = self.__dict__.get( CPU.get_full_register(regname) + '_' + when )
+		return val if val != None else 0xffffffff
 		
 	def disas(self):
 		mnem = ""
@@ -111,7 +113,7 @@ class CPU:
 		elif register in ('rdi', 'edi', 'di'):
 			return 'rdi' if BITS == 64 else 'edi'
 		else:
-			return ''
+			return register
 
 	def get_used_regs(self):
 		readed_registers = set()
@@ -169,6 +171,7 @@ class CPU:
 				self.esi_after = self.mu.reg_read(UC_X86_REG_RSI)
 				self.edi_after = self.mu.reg_read(UC_X86_REG_RDI)
 				self.eip_after = self.mu.reg_read(UC_X86_REG_RIP)
+			self.eflags_after = 0 # not implemented yet
 			self.exception = False
 		except Exception as e:
 			self.mu.emu_stop()
