@@ -23,6 +23,8 @@ parser.add_argument("output", type=str, default='out.png', help="out.png")
 parser.add_argument("-exec", dest="trace_file", type=str, default='', help="trace.txt")
 parser.add_argument("-symbols", type=str, default='', help="symbols.txt")
 
+parser.add_argument("-diff", dest="diff_trace_file", type=str, default='', help="TODO")
+
 parser.add_argument("-from_addr", type=int, default=0, help="from address")
 parser.add_argument("-to_addr", type=int, default=0, help="to address")
 parser.add_argument("-module", type=str, default='', help="draw just module")
