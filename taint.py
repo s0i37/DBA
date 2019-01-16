@@ -40,7 +40,7 @@ def find_string(memory, addr, string):
 
 
 def taint(used_registers, used_memory, memory):
-	global tainted_regs, tainted_mems
+	global tainted_regs, tainted_mems, trace
 	taint_regs = set()
 	taint_mems = set()
 
@@ -58,7 +58,6 @@ def taint(used_registers, used_memory, memory):
 				if args.verbose:
 					print colorama.Fore.GREEN + "[+] match tainted string in 0x%08x: %s" % (string_ptr, args.taint_data) + colorama.Fore.RESET
 
-
 	for used_reg in used_regs_r:
 		used_reg = CPU.get_full_register(used_reg)
 		if used_reg and used_reg in tainted_regs:
@@ -75,9 +74,18 @@ def taint(used_registers, used_memory, memory):
 				print colorama.Fore.GREEN + "[+] using tainted memory: 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 
 	if is_spread:
+		mnem = trace.cpu.disas()
 		for used_reg in used_regs_w:
 			used_reg = CPU.get_full_register(used_reg)
 			if used_reg:
+
+				if mnem.split()[0] in ('push','pop'):
+					if used_reg == 'esp':
+						continue
+				elif mnem.split()[0] in ('rep', 'repne'):
+					if used_reg in ('ecx','esi','edi'):
+						continue
+
 				if args.verbose:
 					print colorama.Fore.GREEN + "[+] tainting register %s" % (used_reg,) + colorama.Fore.RESET
 				tainted_regs.add(used_reg)
