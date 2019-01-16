@@ -1,13 +1,14 @@
 #!/usr/bin/python
-import os
-from sys import argv, stdout
+from lib.emulate import Trace, StopExecution
+import argparse
+import colorama
 
 
-if len(argv) < 2:
-	print "%s trace.txt [symbols.txt]" % argv[0]
-	exit()
-
-trace_file = argv[1]
+parser = argparse.ArgumentParser( description='data flow analisys tool' )
+parser.add_argument("tracefile", type=str, help="trace.txt")
+parser.add_argument("-diff", type=str, default='', help="print difference between two traces")
+parser.add_argument("-comp", type=str, default='', help="print comparison between two traces")
+args = parser.parse_args()
 
 modules_used = {}
 symbols_used = {}
@@ -56,6 +57,108 @@ instr = 0
 memop_r = 0
 memop_w = 0
 
+class Function:
+	def __init__(self, start):
+		self.start = start
+		self.execs = 0
+		self.calls = 0
+
+def get_covered_functions(tracefile):
+	current_function = None
+	functions = {}
+	stack = []
+	with Trace( open(tracefile) ) as trace:
+		try:
+			while True:
+				trace.instruction()
+				if not current_function:
+					current_function = functions.get(trace.cpu.eip_before)
+					if current_function:
+						current_function.calls += 1
+					else:
+						current_function = Function(trace.cpu.eip_before)
+						current_function.calls += 1
+						functions[trace.cpu.eip_before] = current_function
+				current_function.execs += 1
+
+				mnem = trace.cpu.disas()
+				if mnem.split()[0] in ('call', ):
+					stack.append(current_function)
+					current_function = None
+				elif mnem.split()[0] in ('ret', ):
+					current_function = stack.pop()
+
+		except StopExecution:
+			return functions
+
+def diff_cover(functions_after, functions_before):
+	functions_diff = {}
+	for addr in functions_after.keys():
+		if not addr in functions_before.keys():
+			functions_diff[addr] = functions_after[addr]
+	return functions_diff
+
+
+def print_stats(functions):
+	stats = []
+	for addr,function in functions.items():
+		stats.append( ( addr, function.calls, function.execs ) )
+
+	print "\nsymbol:\t\tcalls:\texecs:"
+	for stat in sorted(stats, key=lambda columns: columns[1], reverse=True):
+		print "0x%08x\t%d\t%d" % ( stat[0], stat[1], stat[2] )
+
+
+def print_compared_stats(functions_after, functions_before):
+	def print_diff(a,b):
+		if a > b:
+			print "+%d\t" % (a-b),
+		elif a < b:
+			print "%d\t" % (a-b),
+		else:
+			print "0\t",
+
+	stats = []
+	for addr,function in functions_after.items():
+		stats.append( ( addr, function.calls, function.execs ) )
+
+	print "\nsymbol:\t\tcalls1:\texecs1:\tcalls2:\texecs2:"
+	for stat in sorted(stats, key=lambda columns: columns[1], reverse=True):
+		addr = stat[0]
+		calls_after = stat[1]
+		execs_after = stat[2]
+		if addr in functions_before.keys():
+			calls_before = functions_before[addr].calls
+			execs_before = functions_before[addr].execs
+			print "0x%08x\t" % addr,
+			print_diff(calls_after, calls_before)
+			print_diff(execs_after, execs_before)
+			print "%d\t" % calls_before,
+			print "%d\t" % execs_before,
+			print ''
+		else:
+			print colorama.Fore.GREEN + "0x%08x\t%d\t%d\t-\t-" % (addr,calls_after,execs_after) + colorama.Fore.RESET
+
+	stats = []
+	for addr,function in functions_before.items():
+		stats.append( ( addr, function.calls, function.execs ) )
+	for stat in sorted(stats, key=lambda columns: columns[1], reverse=True):
+		if not addr in functions_after.keys():
+			print colorama.Fore.RED + "0x%08x\t-\t-\t%d\t%d" % ( stat[0], stat[1], stat[2] ) + colorama.Fore.RESET
+
+
+functions = get_covered_functions(args.tracefile)
+if args.diff:
+	functions_diff = get_covered_functions(args.diff)
+	functions = diff_cover(functions, functions_diff)
+elif args.comp:
+	functions_comp = get_covered_functions(args.comp)
+	print_compared_stats(functions, functions_comp)
+	exit()
+print_stats(functions)
+
+
+exit()
 #load trace
 if os.path.isfile(trace_file):
 	with open(trace_file) as f:
@@ -127,3 +230,4 @@ for module,module_range in modules_used.items():
 	for symbol,symbol_range in symbols_used.items():
 		if module_range[0] <= symbol_range[0] and symbol_range[1] <= module_range[1]:
 			print "\t%s\t%d execs" % ( symbol, symbols_exec.get(symbol, 0) )
+
