@@ -106,12 +106,12 @@ with open(trace_file) as f:
 			if func_name:
 				func = func_name
 			else:
-				module,addr = get_relative(addr)
-				if module:
-					func = "%s+0x%x" % (module, addr)
-				else:
-					func = "%s" % threads[thr]['called']
-			print "%d:%d" % (threads[thr]['deep'], thr) + " "*threads[thr]['deep'] + func + '(' + ','.join( threads[thr]['args'][0:args_count] ) + ')'
+#				module,addr = get_relative(addr)
+#				if module:
+#					func = "%s+0x%x" % (module, addr)
+#				else:
+				func = "0x%08x" % threads[thr]['called']
+			print "%02d:%d:%06d" % (threads[thr]['deep'], thr, execs) + " "*threads[thr]['deep'] + func + '(' + ','.join( threads[thr]['args'][0:args_count] ) + ')'
 
 		if inst.mnemonic == 'call':
 			threads[thr]['called'] = None
