@@ -335,6 +335,8 @@ class Trace:
 		self.io.ram = RAM()
 		self.breakpoints = set()
 		self.callstack = {}
+		self.modules = {}
+		self.symbols = {}
 
 	def step(self):
 		'''
@@ -350,6 +352,12 @@ class Trace:
 					#self.trace.seek(-len(line), 1)
 					continue
 				elif line.startswith('[*]'):
+					if line.find('[*] module'):
+						(_,_,module,start,end) = line.split()
+						self.modules[module] = [ int(start,16), int(end,16) ]
+					elif line.find('[*] function'):
+						(_,_,symbol,start,end) = line.split()
+						self.symbols[symbol] = [ int(start,16), int(end,16) ]
 					#self.trace.seek(-len(line), 1)
 					continue
 				elif line.find('{') != -1:
