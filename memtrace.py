@@ -1,19 +1,28 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 from lib.emulate import Trace, StopExecution
-from sys import argv, stdout
+from flask import Flask, request, url_for, render_template, Response, stream_with_context
+import sqlite3
+import argparse
+from sys import stdout
 from os import path
 
 
 HEAP_ALLOCATOR = 0x0808F1B8
-
-
-if len(argv) != 2:
-	print "%s trace.txt" % argv[0]
-	exit()
-
 WHITESPACE_PADDING_SIZE = 0x50
-trace_file = argv[1]
+
+parser = argparse.ArgumentParser( description='data flow analisys tool' )
+parser.add_argument("tracefile", type=str, help="trace.txt")
+parser.add_argument("-from_takt", type=int, default=0, help="trace memory only after takt")
+parser.add_argument("-to_takt", type=int, default=0, help="trace memory only before takt")
+args = parser.parse_args()
+
+c = sqlite3.connect("__memory.db")
+cc = c.cursor()
+print 123123123
+cc.execute("CREATE TABLE cpu(takt BIGINT, thread_id INTEGER, eax BIGINT, ecx BIGINT, edx BIGINT, ebx BIGINT, esp BIGINT, ebp BIGINT, esi BIGINT, edi BIGINT, eip BIGINT)")
+cc.execute("CREATE TABLE mem(takt BIGINT, addr BIGINT, value BIGINT, access_type CHARACTER(1))")
+c.commit()
 
 class Pages:
 	data = [0]
@@ -50,7 +59,7 @@ def get_page_type(addr):
 	return "heap"
 
 
-with Trace( open(trace_file) ) as trace:
+with Trace( open(args.tracefile) ) as trace:
 	after_heap_allocate = None
 	try:
 		while True:
@@ -59,12 +68,31 @@ with Trace( open(trace_file) ) as trace:
 			if info:
 				(used_registers, used_memory) = info
 
+			if args.from_takt and trace.cpu.takt < args.from_takt:
+				continue
+			if args.to_takt and trace.cpu.takt > args.to_takt:
+				break
+
 			if not trace.cpu.eip_before in Memory.code:
 				Memory.code[trace.cpu.eip_before] = []
 			Memory.code[trace.cpu.eip_before].append( {
 				'opcode': trace.cpu.opcode,
 				'disas': trace.cpu.disas()
 			} )
+
+			#cc.execute("INSERT INTO cpu VALUES(?,?,?,?,?,?,?,?,?,?,?)", (
+			#	trace.cpu.takt,
+			#	trace.cpu.thread_id,
+			#	trace.cpu.eax_before,
+			#	trace.cpu.ecx_before,
+			#	trace.cpu.edx_before,
+			#	trace.cpu.ebx_before,
+			#	trace.cpu.esp_before,
+			#	trace.cpu.ebp_before,
+			#	trace.cpu.esi_before,
+			#	trace.cpu.edi_before,
+			#	trace.cpu.eip_before
+			#) )
 
 			page = trace.cpu.esp_before
 			page >>= 12
@@ -78,11 +106,21 @@ with Trace( open(trace_file) ) as trace:
 					if not mem_r in Memory.reads:
 						Memory.reads[mem_r] = []
 					Memory.reads[mem_r].append( (trace.cpu.eip_before,value) )
+					cc.execute("INSERT INTO mem VALUES(?,?,?,'r')", (
+						trace.cpu.takt,
+						mem_r,
+						value
+					) )
 				for mem_w in mems_w:
 					value = trace.io.ram.get_dword(mem_w)
 					if not mem_w in Memory.writes:
 						Memory.writes[mem_w] = []
 					Memory.writes[mem_w].append( (trace.cpu.eip_before,value) )
+					cc.execute("INSERT INTO mem VALUES(?,?,?,'w')", (
+						trace.cpu.takt,
+						mem_w,
+						value
+					) )
 
 			#if trace.cpu.eip_before == HEAP_ALLOCATOR:
 			#	region_size = trace.cpu.ecx_before
@@ -96,6 +134,8 @@ with Trace( open(trace_file) ) as trace:
 	except StopExecution:
 		for module,region in trace.modules.items():
 			Memory.modules[module] = (region[0],region[1])
+		c.commit()
+
 
 addresses = Memory.writes.keys() + Memory.reads.keys()
 addresses.sort()
@@ -119,12 +159,12 @@ def create_html(outfile='out.html'):
 	val = ""
 	operation_count_reads = 0
 	out.write('''
-		<link rel="stylesheet" href="static/jquery-ui/themes/smoothness/jquery-ui.min.css">
-		<link rel="stylesheet" href="static/highlightjs/styles/default.css">
-		<script src="static/jquery/dist/jquery.js"></script>
-		<script src="static/jquery-ui/jquery-ui.js"></script>
-		<script src="static/highlightjs/highlight.pack.js"></script>
-		<script src="static/script.js?v=0.10"></script>
+		<link rel="stylesheet" href="memtrace/static/jquery-ui/themes/smoothness/jquery-ui.min.css">
+		<link rel="stylesheet" href="memtrace/static/highlightjs/styles/default.css">
+		<script src="memtrace/static/jquery/dist/jquery.js"></script>
+		<script src="memtrace/static/jquery-ui/jquery-ui.js"></script>
+		<script src="memtrace/static/highlightjs/highlight.pack.js"></script>
+		<script src="memtrace/static/script.js?v=0.10"></script>
 		<style>
 		body { background-color: white; color: black; }
 		#data { float: left; width: 60%; height: 100%; overflow-y: scroll; }
@@ -145,24 +185,24 @@ def create_html(outfile='out.html'):
 		addr = page
 		while True:
 			# ===SLOWLY===
-			#if addr in Memory.writes.keys():
-			#	operation_type = 'w'
-			#	operation_count_writes = len( Memory.writes[addr] )
-			#	val = "%08X" % Memory.writes[addr][0][1]
-			#	instructions_writes = Memory.writes[addr]
-			#	del Memory.writes[addr]
-			#if addr in Memory.reads.keys():
-			#	if not val:
-			#		operation_type = 'r'
-			#		val = "%08X" % Memory.reads[addr][0][1]
-			#	operation_count_reads = len( Memory.reads[addr] )
-			#	instructions_reads = Memory.reads[addr]
-			#	del Memory.reads[addr]
+			if addr in Memory.writes.keys():
+				operation_type = 'w'
+				operation_count_writes = len( Memory.writes[addr] )
+				val = "%08X" % Memory.writes[addr][0][1]
+				instructions_writes = Memory.writes[addr]
+				del Memory.writes[addr]
+			if addr in Memory.reads.keys():
+				if not val:
+					operation_type = 'r'
+					val = "%08X" % Memory.reads[addr][0][1]
+				operation_count_reads = len( Memory.reads[addr] )
+				instructions_reads = Memory.reads[addr]
+				del Memory.reads[addr]
 
-			operation_count_reads = 1
-			instructions_reads = [[1,1]]
-			operation_type = 'r'
-			val = "00000000"
+			#operation_count_reads = 1
+			#instructions_reads = [[1,1]]
+			#operation_type = 'r'
+			#val = "00000000"
 
 			if val:
 				if operation_type == 'w':
@@ -225,11 +265,18 @@ def create_html(outfile='out.html'):
 
 
 create_html()
+exit()
+www = Flask(__name__)
 
-'''
-TODO:
-сделать поддержку экспорта символов
-*значения памяти и адреса инструкций записывать в базу - т.к. даже для /bin/ls файл получается слишком большой.
-*нужен маленький веб-сервер, который будет извлекать значения памяти и адреса инструкций из базы веб-странице.
-*сервер можно реализовать прямо в memtrace.py
-'''
+@www.route('/data/<int:addr>')
+def data_goto(addr):
+	#cc.execute("SELECT * FROM mem WHERE")
+	return json.dumps({"test":123})
+
+@www.route('/code/<int:addr>')
+def code_goto(addr):
+	#cc.execute("SELECT * FROM cpu WHERE")
+	return json.dumps({"test":123})
+
+www.debug = True
+www.run()

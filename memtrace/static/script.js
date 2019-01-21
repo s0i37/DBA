@@ -46,6 +46,14 @@ $(document).ready( function() {
 		  	title: 'changes',
 		  	open: function()
 		  	{
+		  		$.ajax( { url: "http://127.0.0.1:5000/data/" + 0x8000000,
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+					} )
+				} )
+
 		  		if(event.target.className != 'byte')
 		  		{
 		  			$('#dialog').dialog('close')
@@ -82,6 +90,14 @@ $(document).ready( function() {
 		  	maxHeight: 500,
 		  	open: function()
 		  	{
+		  		$.ajax( { url: "http://127.0.0.1:5000/code/" + 0x41414141,
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+					} )
+				} )
+
 		  		var elem = event.target
 		  		while(1)
 		  		{
