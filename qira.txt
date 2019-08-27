@@ -1,0 +1,29 @@
+/tmp/
+	qira_asm 		- дизас листинг выполненных инструкций
+	qira_binary 	- симлинк на исследуемую программу
+	qira_logs/
+		0 			- номер потока, в нём изменения памяти: 0x18 на инструкцию
+			BE 92 02 00 2C 04 00 00 - адрес меняемой памяти или код регистра из 0_straceRegToQiraRegAddr()
+			01 00 00 00 01 00 00 00 - данные, записываемые или считываемые
+			FF FF FF FF - changelist_number
+			F8 0C 00 00 - flags
+		0_base 		- страницы памяти: base-end_??_module
+		0_env 		- переменные среды
+		0_strace 	- системные вызовы: thread_takt_syscall(args)=ret
+	qira_static_cache/
+		ничего
+
+
+RecordStart:
+	add_change(tid, ip, size, IS_START);
+RecordMemRead(THREADID tid, ADDRINT addr, UINT32 size):
+	add_big_change(tid, addr, value, IS_MEM, size);
+RecordRegRead(THREADID tid, UINT32 regaddr, PIN_REGISTER *value, UINT32 size):
+	add_big_change(tid, RegToQiraRegAddr(reg), value->byte, 0, size);
+
+
+add_change(THREADID tid, uint64_t addr, uint64_t data, uint32_t flags) 
+	c->address = addr; 8
+	c->data = data; 8
+	c->changelist_number = log->changelist_number; 4
+	c->flags = flags|IS_VALID; 4
