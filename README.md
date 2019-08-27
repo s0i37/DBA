@@ -79,11 +79,17 @@ feh out.png
 
 - Taint:
 
-TODO
+```
+./taint.py -taint_addr 95071:0xffc54324:4 tests/trace.txt       # taint 4 bytes in 0xffc54324 from 95071 takt
+
+./taint.py -taint_data testtest trace.txt                       # search and taint 'testtest' buffer
+```
 
 - Audit:
 
-TODO
+```
+./audit.py trace.txt        # implemented: umr_heap, uwc, uaf, oob_read_heap, oob_write_heap, doublefree
+```
 
 - Prototypes:
 
