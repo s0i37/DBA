@@ -1,24 +1,3 @@
-function get_mem_rw_ops(elem)
-{
-	var reads = $(elem).attr('r'),
-		writes = $(elem).attr('w'),
-		out = '',
-		to_hexline = function(hex) { return hex.slice(0,-1).toLowerCase() + '0' }
-		if(writes)
-		{
-			out += '<div class="instructionw">writes:<br>'
-			writes.split(';').forEach( function(i) { out += "<a href='#data" + to_hexline( i.split(':')[0] ) + "'>" + i.split(':')[0] + "</a> <- " + i.split(':')[1] + "<br>" } )
-			out += '</div>'
-		}
-		if(reads)
-		{
-			out += '<div class="instructionr">reads:<br>'
-			reads.split(';').forEach( function(i) { out += "<a href='#data" + to_hexline( i.split(':')[0] ) + "'>" + i.split(':')[0] + "</a> -> " + i.split(':')[1] + "<br>" } )
-			out += '</div>'
-		}
-		return out
-}
-
 function get_states(elem)
 {
 	var states = $(elem).attr('states'),
@@ -46,36 +25,27 @@ $(document).ready( function() {
 		  	title: 'changes',
 		  	open: function()
 		  	{
-		  		$.ajax( { url: "http://127.0.0.1:5000/data/" + 0x8000000,
-					dataType: 'json' } )
-				.done( function(results) {
-					results.forEach( function(v) {
-						console.log(v)
-					} )
-				} )
-
 		  		if(event.target.className != 'byte')
 		  		{
 		  			$('#dialog').dialog('close')
 		  			return
 		  		}
-		  		var reads = $(event.target).attr('r'),
-		  			writes = $(event.target).attr('w'),
-		  			out = ''
-		  		if(writes)
-		  		{
-		  			out += '<div class="memoryw">writes:<br>'
-		  			writes.split(';').forEach( function(i) { out += "<a href='#code" + i.split(':')[0] + "'>" + i.split(':')[0] + "</a> <- " + i.split(':')[1] + "<br>" } )
-		  			out += '</div>'
-		  		}
-		  		if(reads)
-		  		{
-		  			out += '<div class="memoryr">reads:<br>'
-		  			reads.split(';').forEach( function(i) { out += "<a href='#code" + i.split(':')[0] + "'>" + i.split(':')[0] + "</a> -> " + i.split(':')[1] + "<br>" } )
-		  			out += '</div>'
-		  		}
-		  		$('#dialog').dialog( "option", "width", 250 );
-		  		$('#dialog').html( out )
+		  		
+		  		var out = ''
+		  		$.ajax( { url: "http://127.0.0.1:5000/data/" + $(event.target).attr('addr'),
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+						var takt = v[0], eip = v[1], val = v[2], access_type = v[3]
+						if(access_type == 'w')
+							out += '<div><a href="#" takt=' + takt + '>' + takt + '</a>  <a href="#' + eip + '">0x' + eip.toString(16) + '</a> <- ' + val.toString(16).toUpperCase() + '</div>'
+						else if(access_type == 'r')
+							out += '<div><a href="#" takt=' + takt + '>' + takt + '</a>  <a href="#' + eip + '">0x' + eip.toString(16) + '</a> -> ' + val.toString(16).toUpperCase() + '</div>'
+					} )
+					$('#dialog').dialog( "option", "width", 400 );
+		  			$('#dialog').html( out )
+				} )
 		  	},
 		  	close: function()
 		  	{
@@ -90,20 +60,10 @@ $(document).ready( function() {
 		  	maxHeight: 500,
 		  	open: function()
 		  	{
-		  		$.ajax( { url: "http://127.0.0.1:5000/code/" + 0x41414141,
-					dataType: 'json' } )
-				.done( function(results) {
-					results.forEach( function(v) {
-						console.log(v)
-					} )
-				} )
-
 		  		var elem = event.target
 		  		while(1)
 		  		{
 		  			if(elem.className == 'instr')
-		  				break
-		  			else if(elem.className == 'states')
 		  				break
 		  			else if(elem.tagName == 'HTML')
 		  			{
@@ -113,20 +73,34 @@ $(document).ready( function() {
 		  			else
 		  				elem = elem.parentNode
 		  		}
-		  		var out = 'error'
-		  		if(elem.className == 'instr')
-		  		{
-		  			out = get_mem_rw_ops(elem)
-		  			$('#dialog').dialog( "option", "width", 250 );
+
+				var out = ''		  		
+		  		$.ajax( { url: "http://127.0.0.1:5000/code/" + $(elem).attr('eip'),
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+						var takt = v[0], addr = v[1], val = v[2], access_type = v[3]
+						if(access_type == 'w')
+							out += '<div><a href="#" takt=' + takt + '>' + takt + '</a>  <a href="#' + ((addr>>4)<<4) + '">0x' + addr.toString(16) + '</a> <- ' + val.toString(16).toUpperCase() + '</div>'
+						else if(access_type == 'r')
+							out += '<div><a href="#" takt=' + takt + '>' + takt + '</a>  <a href="#' + ((addr>>4)<<4) + '">0x' + addr.toString(16) + '</a> -> ' + val.toString(16).toUpperCase() + '</div>'
+					} )
+					$('#dialog').dialog( "option", "width", 400 );
 		  			$('#dialog').dialog( "option", "title", 'memory operations' );
-		  		}
-		  		else if(elem.className == 'states')
+		  			$('#dialog').html( out )
+				} )
+
+		  		/*
+		  		if(elem.className == 'states')
 		  		{
 		  			out = get_states(elem)
 		  			$('#dialog').dialog( "option", "width", 800 );
 		  			$('#dialog').dialog( "option", "title", 'states' );
+		  			$('#dialog').html( out )
 		  		}
-		  		$('#dialog').html( out )
+		  		*/
+		  		
 		  	},
 		  	close: function()
 		  	{
@@ -135,7 +109,10 @@ $(document).ready( function() {
 		} )
 	} )
 
+/*
 	$('#code code').each(function(i, block) {
     	hljs.highlightBlock(block);
   	})
+*/
+
 } )
