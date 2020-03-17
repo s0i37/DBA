@@ -2,15 +2,16 @@ from unicorn import *
 from unicorn.x86_const import *
 from capstone import *
 from sys import stdout
+from os.path import basename
 import struct
 import string
 import colorama
 
-__version__ = '0.14'
+__version__ = '0.15'
 
 PAGE_SIZE = 0x1000
-BITS = 32
-#BITS = 64
+#BITS = 32
+BITS = 64
 
 mu = Uc( UC_ARCH_X86, {32: UC_MODE_32, 64: UC_MODE_64}[BITS] )
 md = Cs( CS_ARCH_X86, {32: CS_MODE_32, 64: CS_MODE_64}[BITS] )
@@ -79,7 +80,10 @@ class CPU:
 		self.eip_before = int( pc.split(':')[1], 16 )
 		self.thread_id = int( pc.split(':')[2], 16 )
 		self.opcode = opcode[1:-1].decode('hex')
-		(self.eax_before, self.ecx_before, self.edx_before, self.ebx_before, self.esp_before, self.ebp_before, self.esi_before, self.edi_before) = map( lambda v: int(v, 16), regs.split(',') )
+		if BITS == 32:
+			(self.eax_before, self.ecx_before, self.edx_before, self.ebx_before, self.esp_before, self.ebp_before, self.esi_before, self.edi_before) = map( lambda v: int(v, 16), regs.split(',') )
+		elif BITS == 64:
+			(self.rax_before, self.rcx_before, self.rdx_before, self.rbx_before, self.rsp_before, self.rbp_before, self.rsi_before, self.rdi_before) = map( lambda v: int(v, 16), regs.split(',') )
 		self.eflags_before = 0 # not implemented yet
 
 	def get(self, regname, when='before'):
@@ -128,7 +132,7 @@ class CPU:
 
 		return (readed_registers, writed_registers)
 
-	def execute(self):	
+	def execute(self):
 		max_attempts = 5
 		try:
 			if BITS == 32:
@@ -224,6 +228,13 @@ class MCH:
 				for cell in xrange(address, address+len(value)):
 					self.writed_cells.add(cell)
 
+	def save_memory(self, trace_line):
+		(pc,address,value) = trace_line.split()
+		address = int( address[1:-2], 16 )
+		for offset in xrange(0, len(value), 2):
+			byte = struct.pack( "B", int(value[offset:offset+2], 16) )
+			self.ram[address+offset/2] = byte
+
 	def access(self, uc, access, address, size, value, user_data):
 		#print "[debug] access memory 0x%08x:%d" % (address, size)
 		if access in (UC_MEM_WRITE,):
@@ -236,7 +247,7 @@ class MCH:
 			elif size == 4:
 				value = struct.pack( "<I", value)
 			elif size == 8:
-				value = struct.pack( "<Q", value)
+				value = struct.pack( "<q", value)
 			self.cache[address] = value
 		else:
 			for cell in xrange(address, address+size):
@@ -352,10 +363,10 @@ class Trace:
 					#self.trace.seek(-len(line), 1)
 					continue
 				elif line.startswith('[*]'):
-					if line.find('[*] module'):
+					if line.find('[*] module') != -1:
 						(_,_,module,start,end) = line.split()
-						self.modules[module] = [ int(start,16), int(end,16) ]
-					elif line.find('[*] function'):
+						self.modules[basename(module)] = [ int(start,16), int(end,16) ]
+					elif line.find('[*] function') != -1:
 						(_,_,symbol,start,end) = line.split()
 						self.symbols[symbol] = [ int(start,16), int(end,16) ]
 					#self.trace.seek(-len(line), 1)
@@ -366,12 +377,16 @@ class Trace:
 						break
 					self.cpu.set_state(line)
 					was_instruction_load = True
-				elif line.find('[0x') != -1:
+				elif line.find('[0x') != -1 and ( line.find('->') != -1 or line.find('<-') != -1):
 					self.io.save_state(line)
+				elif line.find('[0x') != -1 and line.find(':') != -1:
+					self.io.save_memory(line)
 				else:
 					continue
-			except:
+			except Exception as e:
+				#print str(e)
 				#print line
+				#exit()
 				pass
 
 		self.cpu.instruction = self.cpu.disas()
@@ -386,7 +401,7 @@ class Trace:
 		self.io.writed_cells = set()
 		self.step()
 
-		if self.cpu.takt and not self.cpu.takt % 1000:
+		if self.cpu.takt and not self.cpu.takt % 10000:
 			stdout.write("\r" + " "*75)
 			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.instruction) + colorama.Fore.RESET )
 			stdout.flush()
