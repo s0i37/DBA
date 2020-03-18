@@ -7,7 +7,7 @@ import struct
 import string
 import colorama
 
-__version__ = '0.15'
+__version__ = '0.16'
 
 PAGE_SIZE = 0x1000
 #BITS = 32
@@ -118,6 +118,35 @@ class CPU:
 			return 'rdi' if BITS == 64 else 'edi'
 		else:
 			return register
+
+	@staticmethod
+	def get_sub_registers(register):
+		register = register.lower()
+		for sub_registers in [ 
+				['rax', 'eax', 'ax', 'ah', 'al'],
+				['rdx', 'edx', 'dx', 'dh', 'dl'],
+				['rcx', 'ecx', 'cx', 'ch', 'cl'],
+				['rbx', 'ebx', 'bx', 'bh', 'bl'],
+				['rbp', 'esp', 'sp'],
+				['rsp', 'ebp', 'bp'],
+				['rdi', 'edi', 'di'],
+				['rsi', 'esi', 'si'],
+				['r8', 'r8d', 'r8w', 'r8b'],
+				['r9', 'r9d', 'r9w', 'r9b'],
+				['r10', 'r10d', 'r10w', 'r10b'],
+				['r11', 'r11d', 'r11w', 'r11b'],
+				['r12', 'r12d', 'r12w', 'r12b'],
+				['r13', 'r13d', 'r13w', 'r13b'],
+				['r14', 'r14d', 'r14w', 'r14b'],
+				['r15', 'r15d', 'r15w', 'r15b'],
+			]:
+			if register in sub_registers:
+				index = sub_registers.index(register)
+				if index < 3:
+					return sub_registers[index:] # AX has [AH,AL]
+				else:
+					return sub_registers[index] # AH hasn't AL
+		return register
 
 	def get_used_regs(self):
 		readed_registers = set()
@@ -337,9 +366,6 @@ class RAM:
 class Trace:
 	def __init__(self, trace):
 		self.trace = trace
-		self.trace.seek(0,2)
-		self.eof_trace = trace.tell()
-		self.trace.seek(0)
 		self.cpu = CPU()
 		self.io = MCH()
 		self.cpu.cache = self.io.cache = Cache()
@@ -348,46 +374,49 @@ class Trace:
 		self.callstack = {}
 		self.modules = {}
 		self.symbols = {}
+		self.__line = ''
 
 	def step(self):
 		'''
 		load instruction
 		'''
-		was_instruction_load = False
+		was_instruction_loaded = False
 		while True:
-			if self.trace.tell() == self.eof_trace:
+			if not self.__line:
+				self.__line = self.trace.readline()
+			if not self.__line:
 				raise StopExecution
-			line = self.trace.readline()
 			try:
-				if line.startswith('[#]'):
-					#self.trace.seek(-len(line), 1)
+				if self.__line.startswith('[#]'):
+					self.__line = ''
 					continue
-				elif line.startswith('[*]'):
-					if line.find('[*] module') != -1:
-						(_,_,module,start,end) = line.split()
+				elif self.__line.startswith('[*]'):
+					if self.__line.find('[*] module') != -1:
+						(_,_,module,start,end) = self.__line.split()
 						self.modules[basename(module)] = [ int(start,16), int(end,16) ]
-					elif line.find('[*] function') != -1:
-						(_,_,symbol,start,end) = line.split()
+					elif self.__line.find('[*] function') != -1:
+						(_,_,symbol,start,end) = self.__line.split()
 						self.symbols[symbol] = [ int(start,16), int(end,16) ]
-					#self.trace.seek(-len(line), 1)
+					self.__line = ''
 					continue
-				elif line.find('{') != -1:
-					if was_instruction_load:
-						self.trace.seek(-len(line), 1)
+				elif self.__line.find('{') != -1:
+					if was_instruction_loaded:
 						break
-					self.cpu.set_state(line)
-					was_instruction_load = True
-				elif line.find('[0x') != -1 and ( line.find('->') != -1 or line.find('<-') != -1):
-					self.io.save_state(line)
-				elif line.find('[0x') != -1 and line.find(':') != -1:
-					self.io.save_memory(line)
+					self.cpu.set_state(self.__line)
+					was_instruction_loaded = True
+				elif self.__line.find('[0x') != -1 and ( self.__line.find('->') != -1 or self.__line.find('<-') != -1):
+					self.io.save_state(self.__line)
+				elif self.__line.find('[0x') != -1 and self.__line.find(':') != -1:
+					self.io.save_memory(self.__line)
 				else:
+					self.__line = ''
 					continue
 			except Exception as e:
 				#print str(e)
-				#print line
+				#print self.__line
 				#exit()
 				pass
+			self.__line = ''
 
 		self.cpu.instruction = self.cpu.disas()
 
