@@ -230,15 +230,16 @@ class MCH:
 	def save_state(self, trace_line):
 		(pc,address,direction,value) = trace_line.split()
 		address = int( address[1:-1], 16 )
+		size = len(value[2:])/2
 
 		try:
-			if len(value[2:]) == 1:
+			if size == 1:
 				value = struct.pack( "B", int(value,16) )
-			elif len(value[2:]) == 2:
+			elif size == 2:
 				value = struct.pack( "<H", int(value,16) )
-			elif len(value[2:]) == 4:
+			elif size == 4:
 				value = struct.pack( "<I", int(value,16) )
-			elif len(value[2:]) == 8:
+			elif size == 8:
 				value = struct.pack( "<Q", int(value,16) )
 			else:
 				value = None
@@ -249,12 +250,12 @@ class MCH:
 			if direction == '->':
 				self.save(address, value)
 				self.ram[address] = value
-				for cell in xrange(address, address+len(value)):
+				for cell in xrange(address, address+size):
 					self.readed_cells.add(cell)
 			elif direction == '<-':
 				self.allocate(address)
 				self.ram[address] = value
-				for cell in xrange(address, address+len(value)):
+				for cell in xrange(address, address+size):
 					self.writed_cells.add(cell)
 
 	def save_memory(self, trace_line):

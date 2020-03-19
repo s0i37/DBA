@@ -26,8 +26,15 @@ if path.isfile(args.taint_data):
 	with open(args.taint_data) as f:
 		args.taint_data = f.read()
 
-tainted_registers = set()
+class Thread:
+	def __init__(self):
+		self.tainted_registers = set()
+		self.tainted_offset = {}
+
+threads = {}
 tainted_memory = set()
+tainted_data = {}
+
 
 def get_symbol(trace):
 	return False
@@ -56,7 +63,7 @@ def find_string(memory, addr, string):
 
 def is_tainted_reg(reg):
 	global tainted_registers
-	for tainted_register in tainted_registers:
+	for tainted_register in threads[trace.cpu.thread_id].tainted_registers:
 		if reg in CPU.get_sub_registers(tainted_register):
 			return True
 	return False
@@ -64,14 +71,32 @@ def is_tainted_reg(reg):
 def untaint_reg(reg):
 	global tainted_registers
 	if reg in CPU.get_sub_registers(reg):
-		tainted_registers.remove(reg)
+		threads[trace.cpu.thread_id].tainted_registers.remove(reg)
 
 def taint_reg(reg):
 	global tainted_registers
-	tainted_registers.add(reg)
+	threads[trace.cpu.thread_id].tainted_registers.add(reg)
+
+def is_tainted_memory(addr):
+	global tainted_memory, tainted_data, threads
+	is_taint = addr in tainted_memory
+	if is_taint:
+		threads[trace.cpu.thread_id].tainted_offset = tainted_data.get(addr)
+	return is_taint
+
+def untaint_memory(addr):
+	global tainted_memory
+	tainted_memory.remove(addr)
+
+def taint_memory(addr):
+	global tainted_memory, tainted_data, threads
+	tainted_memory.add(addr)
+	if threads[trace.cpu.thread_id].tainted_offset:
+		tainted_data[addr] = threads[trace.cpu.thread_id].tainted_offset
+
 
 def taint(used_registers, used_memory, memory):
-	global tainted_registers, tainted_memory, trace
+	global trace
 	tainted_regs = set()
 	tainted_mems = set()
 
@@ -79,15 +104,18 @@ def taint(used_registers, used_memory, memory):
 	used_mems_r, used_mems_w = used_memory
 	is_spread = False
 
+	try:	threads[trace.cpu.thread_id]
+	except:	threads[trace.cpu.thread_id] = Thread()
+
 	if args.taint_data:
 		for used_memory_cell in used_mems_r:
 			string_ptr = find_string(memory, used_memory_cell, args.taint_data)
 			if string_ptr:
-				is_spread = True
 				i = 0
 				for ptr in xrange(string_ptr, string_ptr+len(args.taint_data)):
 					if not args.taint_size or args.taint_offset <= i < args.taint_offset + args.taint_size:
-						tainted_memory.add(ptr)
+						taint_memory(ptr)
+						tainted_data[ptr] = i
 					i += 1
 				if args.verbose:
 					print colorama.Fore.YELLOW + "[+] found tainted data in 0x%08x: %s" % (string_ptr, args.taint_data) + colorama.Fore.RESET
@@ -100,10 +128,11 @@ def taint(used_registers, used_memory, memory):
 				print colorama.Fore.YELLOW + "[+] using tainted register: %s" % (used_reg,) + colorama.Fore.RESET
 
 	for used_memory_cell in used_mems_r:
-		if used_memory_cell in tainted_memory:
+		if is_tainted_memory(used_memory_cell):
 			is_spread = True
 			tainted_mems.add(used_memory_cell)
 			if args.verbose:
+				print str(used_memory)
 				print colorama.Fore.YELLOW + "[+] using tainted memory: 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 
 	if is_spread:
@@ -124,16 +153,16 @@ def taint(used_registers, used_memory, memory):
 		for used_memory_cell in used_mems_w:
 			if args.verbose:
 				print colorama.Fore.YELLOW + "[+] tainting memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
-			tainted_memory.add(used_memory_cell)
+			taint_memory(used_memory_cell)
 	else:
 		for used_reg in used_regs_w:
 			if is_tainted_reg(used_reg):
 				untaint_reg(used_reg)
 		for used_memory_cell in used_mems_w:
-			if used_memory_cell in tainted_memory:
+			if is_tainted_memory(used_memory_cell):
 				if args.verbose:
 					print colorama.Fore.YELLOW + "[-] release memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
-				tainted_memory.remove(used_memory_cell)
+				untaint_memory(used_memory_cell)
 
 	return (tainted_regs, tainted_mems)
 
@@ -156,9 +185,6 @@ if args.taint_reg:
 	print colorama.Fore.LIGHTBLACK_EX + "[*] tainting register: %s" % reg.upper() + colorama.Fore.RESET
 	taint_reg(reg.lower())
 
-if not tainted_memory and not tainted_registers:
-	print "[-] no tainted memory or registers"
-	exit()
 
 taint_no = 0
 with Trace( open(args.tracefile) ) as trace:
@@ -191,10 +217,16 @@ with Trace( open(args.tracefile) ) as trace:
 							tainted_reg = CPU.get_full_register(tainted_reg)
 							print " %s=0x%08x," % ( tainted_reg.upper(), trace.cpu.get(tainted_reg) ),
 						mem_shown = 0
+						tainted_bytes = []
 						for tainted_mem in tainted_mems:
-							if mem_shown + 4 < tainted_mem:
-								print " 0x%08x -> 0x%08x," % ( tainted_mem, trace.io.ram.get_dword(tainted_mem) ),
+							if mem_shown + 0 < tainted_mem:
+								print " 0x%08x -> %02X," % ( tainted_mem, trace.io.ram.get_byte(tainted_mem) ),
 								mem_shown = tainted_mem
+							tainted_bytes.append(tainted_data[tainted_mem])
+						if tainted_bytes:
+							print colorama.Fore.YELLOW + " " + str(tainted_bytes),
+						else:
+							print colorama.Fore.YELLOW + " " + str(threads[trace.cpu.thread_id].tainted_offset),
 						print colorama.Fore.RESET
 					else:
 						break
