@@ -1,30 +1,10 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 from lib.emulate import Trace, CPU
 import argparse
 import colorama
 import json
 from os import path
 
-parser = argparse.ArgumentParser( description='data flow analisys tool' )
-parser.add_argument("tracefile", type=str, help="trace.txt")
-parser.add_argument("-symbols", type=str, default='', help="symbols.json")
-parser.add_argument("-taint_addr", type=str, default='', help="taint [takt:]address:size (1200:0x402000:10)")
-parser.add_argument("-taint_reg", type=str, default='', help="taint takt:reg (1200:ESI)")
-parser.add_argument("-taint_data", type=str, default='', help='taint data: "GET / HTTP/1.1" or input.bin')
-parser.add_argument("-taint_offset", type=int, default=0, help="from offset (subdata)")
-parser.add_argument("-taint_size", type=int, default=0, help="size bytes (subdata)")
-parser.add_argument("-from_addr", type=int, default=0, help="print tainted instruction only from address")
-parser.add_argument("-to_addr", type=int, default=0, help="print tainted instruction only to address")
-parser.add_argument("-from_takt", type=int, default=0, help="print tainted instruction only after takt")
-parser.add_argument("-to_takt", type=int, default=0, help="print tainted instruction only before takt")
-parser.add_argument("-module", type=str, default='', help="show tainted instruction just this module")
-parser.add_argument("-n", dest= "limit", type=int, default=0, help="count of print tainted instructions")
-parser.add_argument("-v", dest="verbose", type=bool, default=False, help="verbose")
-args = parser.parse_args()
-
-if path.isfile(args.taint_data):
-	with open(args.taint_data) as f:
-		args.taint_data = f.read()
 
 class Thread:
 	def __init__(self):
@@ -34,6 +14,7 @@ class Thread:
 threads = {}
 tainted_memory = set()
 tainted_data = {}
+settings = {}
 
 
 def get_symbol(trace):
@@ -61,42 +42,42 @@ def find_string(memory, addr, string):
 			return addr
 	return None
 
-def is_tainted_reg(reg):
+def is_tainted_reg(thread_id, reg):
 	global tainted_registers
-	for tainted_register in threads[trace.cpu.thread_id].tainted_registers:
+	for tainted_register in threads[thread_id].tainted_registers:
 		if reg in CPU.get_sub_registers(tainted_register):
 			return True
 	return False
 
-def untaint_reg(reg):
+def untaint_reg(thread_id, reg):
 	global tainted_registers
 	if reg in CPU.get_sub_registers(reg):
-		threads[trace.cpu.thread_id].tainted_registers.remove(reg)
+		threads[thread_id].tainted_registers.remove(reg)
 
-def taint_reg(reg):
+def taint_reg(thread_id, reg):
 	global tainted_registers
-	threads[trace.cpu.thread_id].tainted_registers.add(reg)
+	threads[thread_id].tainted_registers.add(reg)
 
-def is_tainted_memory(addr):
+def is_tainted_memory(thread_id, addr):
 	global tainted_memory, tainted_data, threads
 	is_taint = addr in tainted_memory
 	if is_taint:
-		threads[trace.cpu.thread_id].tainted_offset = tainted_data.get(addr)
+		threads[thread_id].tainted_offset = tainted_data.get(addr)
 	return is_taint
 
 def untaint_memory(addr):
 	global tainted_memory
 	tainted_memory.remove(addr)
 
-def taint_memory(addr):
+def taint_memory(thread_id, addr):
 	global tainted_memory, tainted_data, threads
 	tainted_memory.add(addr)
-	if threads[trace.cpu.thread_id].tainted_offset:
-		tainted_data[addr] = threads[trace.cpu.thread_id].tainted_offset
+	if threads[thread_id].tainted_offset:
+		tainted_data[addr] = threads[thread_id].tainted_offset
 
 
-def taint(used_registers, used_memory, memory):
-	global trace
+def taint(thread_id, used_registers, used_memory, memory, mnem):
+	global threads, settings
 	tainted_regs = set()
 	tainted_mems = set()
 
@@ -104,39 +85,38 @@ def taint(used_registers, used_memory, memory):
 	used_mems_r, used_mems_w = used_memory
 	is_spread = False
 
-	try:	threads[trace.cpu.thread_id]
-	except:	threads[trace.cpu.thread_id] = Thread()
+	try:	threads[thread_id]
+	except:	threads[thread_id] = Thread()
 
-	if args.taint_data:
+	if settings['taint_data']:
 		for used_memory_cell in used_mems_r:
-			string_ptr = find_string(memory, used_memory_cell, args.taint_data)
+			string_ptr = find_string(memory, used_memory_cell, settings['taint_data'])
 			if string_ptr:
 				i = 0
-				for ptr in xrange(string_ptr, string_ptr+len(args.taint_data)):
-					if not args.taint_size or args.taint_offset <= i < args.taint_offset + args.taint_size:
-						taint_memory(ptr)
+				for ptr in xrange(string_ptr, string_ptr+len(settings['taint_data'])):
+					if not settings['taint_size'] or settings['taint_offset'] <= i < settings['taint_offset'] + settings['taint_size']:
+						taint_memory(thread_id, ptr)
 						tainted_data[ptr] = i
 					i += 1
-				if args.verbose:
-					print colorama.Fore.YELLOW + "[+] found tainted data in 0x%08x: %s" % (string_ptr, args.taint_data) + colorama.Fore.RESET
+				if settings['verbose']:
+					print colorama.Fore.YELLOW + "[+] found tainted data in 0x%08x: %s" % (string_ptr, settings['taint_data']) + colorama.Fore.RESET
 
 	for used_reg in used_regs_r:
-		if used_reg and is_tainted_reg(used_reg):
+		if used_reg and is_tainted_reg(thread_id, used_reg):
 			is_spread = True
 			tainted_regs.add(used_reg)
-			if args.verbose:
+			if settings['verbose']:
 				print colorama.Fore.YELLOW + "[+] using tainted register: %s" % (used_reg,) + colorama.Fore.RESET
 
 	for used_memory_cell in used_mems_r:
-		if is_tainted_memory(used_memory_cell):
+		if is_tainted_memory(thread_id, used_memory_cell):
 			is_spread = True
 			tainted_mems.add(used_memory_cell)
-			if args.verbose:
+			if settings['verbose']:
 				print str(used_memory)
 				print colorama.Fore.YELLOW + "[+] using tainted memory: 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 
 	if is_spread:
-		mnem = trace.cpu.disas()
 		for used_reg in used_regs_w:
 			if used_reg:
 
@@ -147,49 +127,53 @@ def taint(used_registers, used_memory, memory):
 					if used_reg in ('rcx','rsi','rdi','ecx','esi','edi'):
 						continue
 
-				if args.verbose:
+				if settings['verbose']:
 					print colorama.Fore.YELLOW + "[+] tainting register %s" % (used_reg,) + colorama.Fore.RESET
-				taint_reg(used_reg)
+				taint_reg(thread_id, used_reg)
 		for used_memory_cell in used_mems_w:
-			if args.verbose:
+			if settings['verbose']:
 				print colorama.Fore.YELLOW + "[+] tainting memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
-			taint_memory(used_memory_cell)
+			taint_memory(thread_id, used_memory_cell)
 	else:
 		for used_reg in used_regs_w:
-			if is_tainted_reg(used_reg):
-				untaint_reg(used_reg)
+			if is_tainted_reg(thread_id, used_reg):
+				untaint_reg(thread_id, used_reg)
 		for used_memory_cell in used_mems_w:
-			if is_tainted_memory(used_memory_cell):
-				if args.verbose:
+			if is_tainted_memory(thread_id, used_memory_cell):
+				if settings['verbose']:
 					print colorama.Fore.YELLOW + "[-] release memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 				untaint_memory(used_memory_cell)
 
 	return (tainted_regs, tainted_mems)
 
-if args.taint_addr:
-	option_value = args.taint_addr.split(':')
-	if len(option_value) == 3:
-		(from_takt,taint_addr,taint_size) = option_value
-		args.from_takt = int(from_takt)
-	else:
-		(taint_addr,taint_size) = option_value
-	taint_addr = int(taint_addr,16)
-	taint_size = int(taint_size)
-	for addr in xrange(taint_addr, taint_addr+taint_size):
-		print colorama.Fore.LIGHTBLACK_EX + "[*] tainting memory: 0x%08x" % addr + colorama.Fore.RESET
-		tainted_memory.add(addr)
 
-if args.taint_reg:
-	(from_takt,reg) = args.taint_reg.split(':')
-	args.from_takt = int(from_takt)
-	print colorama.Fore.LIGHTBLACK_EX + "[*] tainting register: %s" % reg.upper() + colorama.Fore.RESET
-	taint_reg(reg.lower())
+def init(taint_mem, taint_reg):
+	global settings
+	if taint_mem:
+		option_value = taint_mem.split(':')
+		if len(option_value) == 3:
+			(from_takt,taint_addr,taint_size) = option_value
+			settings['from_takt'] = int(from_takt)
+		else:
+			(taint_addr,taint_size) = option_value
+		taint_addr = int(taint_addr,16)
+		taint_size = int(taint_size)
+		for addr in xrange(taint_addr, taint_addr+taint_size):
+			print colorama.Fore.LIGHTBLACK_EX + "[*] tainting memory: 0x%08x" % addr + colorama.Fore.RESET
+			tainted_memory.add(addr)
 
+	if taint_reg:
+		(from_takt,reg) = taint_reg.split(':')
+		settings['from_takt'] = int(from_takt)
+		print colorama.Fore.LIGHTBLACK_EX + "[*] tainting register: %s" % reg.upper() + colorama.Fore.RESET
+		taint_reg(reg.lower())
 
-taint_no = 0
-with Trace( open(args.tracefile) ) as trace:
-	if args.symbols and path.isfile(args.symbols):
-		with open(args.symbols) as s:
+def analyze(trace):
+	global settings
+	taint_no = 0
+	
+	if settings['symbols'] and path.isfile(settings['symbols']):
+		with open(settings['symbols']) as s:
 			for symbol in json.loads( s.read() ):
 				trace.symbols[symbol['name']] = [symbol['offset'], symbol['offset']+symbol['size']]
 	while True:
@@ -198,38 +182,70 @@ with Trace( open(args.tracefile) ) as trace:
 		if not info:
 			continue
 		
-		if args.module and (not args.from_addr and not args.to_addr) and args.module in trace.modules.keys():
-			(args.from_addr,args.to_addr) = trace.modules[args.module]
+		if settings['module'] and (not settings['from_addr'] and not settings['to_addr']) and settings['module'] in trace.modules.keys():
+			(settings['from_addr'],settings['to_addr']) = trace.modules[ settings['module'] ]
 
 		(used_registers, used_memory) = info
-		if args.from_takt <= trace.cpu.takt:
-			(tainted_regs, tainted_mems) = taint(used_registers, used_memory, trace.io.ram)
+		if settings['from_takt'] <= trace.cpu.takt:
+			(tainted_regs, tainted_mems) = taint(trace.cpu.thread_id, used_registers, used_memory, trace.io.ram, trace.cpu.disas())
 			if tainted_regs or tainted_mems:
-				if (args.from_addr == 0 and args.to_addr == 0) or args.from_addr <= trace.cpu.eip_before <= args.to_addr:
+				if (settings['from_addr'] == 0 and settings['to_addr'] == 0) or settings['from_addr'] <= trace.cpu.eip_before <= settings['to_addr']:
 					taint_no += 1
-					if args.limit == 0 or args.limit >= taint_no:
-						symbol = get_symbol(trace)
-						if symbol:
-							print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:%s: %s;" % (taint_no, trace.cpu.takt, symbol, trace.cpu.instruction) + colorama.Fore.GREEN,
-						else:
-							print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:0x%08x: %s;" % (taint_no, trace.cpu.takt, trace.cpu.eip_before, trace.cpu.instruction) + colorama.Fore.GREEN,
-						for tainted_reg in tainted_regs:
-							tainted_reg = CPU.get_full_register(tainted_reg)
-							print " %s=0x%08x," % ( tainted_reg.upper(), trace.cpu.get(tainted_reg) ),
-						mem_shown = 0
-						tainted_bytes = []
-						for tainted_mem in tainted_mems:
-							if mem_shown + 0 < tainted_mem:
-								print " 0x%08x -> %02X," % ( tainted_mem, trace.io.ram.get_byte(tainted_mem) ),
-								mem_shown = tainted_mem
-							tainted_bytes.append(tainted_data[tainted_mem])
-						if tainted_bytes:
-							print colorama.Fore.YELLOW + " " + str(tainted_bytes),
-						else:
-							print colorama.Fore.YELLOW + " " + str(threads[trace.cpu.thread_id].tainted_offset),
-						print colorama.Fore.RESET
+					if settings['limit'] == 0 or settings['limit'] >= taint_no:
+						yield (tainted_regs, tainted_mems)
 					else:
 						break
 		
-		if args.to_takt and trace.cpu.takt >= args.to_takt:
+		if settings['to_takt'] and trace.cpu.takt >= settings['to_takt']:
 			break
+
+
+if __name__ == '__main__':
+	parser = argparse.ArgumentParser( description='data flow analisys tool' )
+	parser.add_argument("tracefile", type=str, help="trace.log")
+	parser.add_argument("-symbols", type=str, default='', help="symbols.json")
+	parser.add_argument("-taint_mem", type=str, default='', help="taint [takt:]address:size (1200:0x402000:10)")
+	parser.add_argument("-taint_reg", type=str, default='', help="taint takt:reg (1200:ESI)")
+	parser.add_argument("-taint_data", type=str, default='', help='taint data: "GET / HTTP/1.1" or input.bin')
+	parser.add_argument("-taint_offset", type=int, default=0, help="from offset (subdata)")
+	parser.add_argument("-taint_size", type=int, default=0, help="size bytes (subdata)")
+	parser.add_argument("-from_addr", type=int, default=0, help="print tainted instruction only from address")
+	parser.add_argument("-to_addr", type=int, default=0, help="print tainted instruction only to address")
+	parser.add_argument("-from_takt", type=int, default=0, help="print tainted instruction only after takt")
+	parser.add_argument("-to_takt", type=int, default=0, help="print tainted instruction only before takt")
+	parser.add_argument("-module", type=str, default='', help="show tainted instruction just this module")
+	parser.add_argument("-n", dest= "limit", type=int, default=0, help="count of print tainted instructions")
+	parser.add_argument("-v", dest="verbose", type=bool, default=False, help="verbose")
+	args = parser.parse_args()
+
+	if path.isfile(args.taint_data):
+		with open(args.taint_data) as f:
+			args.taint_data = f.read()
+	
+	settings = vars(args)
+	init(args.taint_mem, args.taint_reg)
+	trace = Trace( open(args.tracefile) )
+	taint_no = 0
+	for access in analyze(trace):
+		taint_no += 1
+		symbol = get_symbol(trace)
+		if symbol:
+			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:%s: %s;" % (taint_no, trace.cpu.takt, symbol, trace.cpu.instruction) + colorama.Fore.GREEN,
+		else:
+			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:0x%08x: %s;" % (taint_no, trace.cpu.takt, trace.cpu.eip_before, trace.cpu.instruction) + colorama.Fore.GREEN,
+		(tainted_regs, tainted_mems) = access
+		for tainted_reg in tainted_regs:
+			tainted_reg = CPU.get_full_register(tainted_reg)
+			print " %s=0x%08x," % ( tainted_reg.upper(), trace.cpu.get(tainted_reg) ),
+		mem_shown = 0
+		tainted_bytes = []
+		for tainted_mem in tainted_mems:
+			if mem_shown + 0 < tainted_mem:
+				print " 0x%08x -> %02X," % ( tainted_mem, trace.io.ram.get_byte(tainted_mem) ),
+				mem_shown = tainted_mem
+			tainted_bytes.append(tainted_data[tainted_mem])
+		if tainted_bytes:
+			print colorama.Fore.YELLOW + " " + str(tainted_bytes),
+		else:
+			print colorama.Fore.YELLOW + " " + str(threads[trace.cpu.thread_id].tainted_offset),
+		print colorama.Fore.RESET
