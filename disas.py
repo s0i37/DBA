@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 from lib.emulate import Trace
 from sys import stdin
 import argparse
@@ -26,8 +26,8 @@ parser.add_argument("-diff", type=str, default='', help="print difference betwee
 args = parser.parse_args()
 
 if args.ir:
-	from miasm2.core.locationdb import LocationDB
-	from miasm2.analysis.machine import Machine
+	from miasm.core.locationdb import LocationDB
+	from miasm.analysis.machine import Machine
 	machine = Machine('x86_32')
 
 if args.diff:
