@@ -86,7 +86,8 @@ def get_covered_functions(tracefile):
 					stack.append(current_function)
 					current_function = None
 				elif mnem.split()[0] in ('ret', ):
-					current_function = stack.pop()
+					try:	current_function = stack.pop()
+					except:	current_function = Function(0)
 
 		except StopExecution:
 			return functions
