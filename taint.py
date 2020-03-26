@@ -42,6 +42,19 @@ def find_string(memory, addr, string):
 			return addr
 	return None
 
+
+def on_found_string(string_ptr, thread_id):
+	global settings, tainted_data
+	i = 0
+	for ptr in xrange(string_ptr, string_ptr+len(settings['taint_data'])):
+		if not settings['taint_size'] or settings['taint_offset'] <= i < settings['taint_offset'] + settings['taint_size']:
+			taint_memory(thread_id, ptr)
+			tainted_data[ptr] = i
+		i += 1
+	if settings['verbose']:
+		print colorama.Fore.YELLOW + "[+] found tainted data in 0x%08x: %s" % (string_ptr, settings['taint_data']) + colorama.Fore.RESET
+
+
 def is_tainted_reg(thread_id, reg):
 	global tainted_registers
 	for tainted_register in threads[thread_id].tainted_registers:
@@ -80,6 +93,8 @@ def taint(thread_id, used_registers, used_memory, memory, mnem):
 	global threads, settings
 	tainted_regs = set()
 	tainted_mems = set()
+	spread_regs = set()
+	spread_mems = set()
 
 	used_regs_r, used_regs_w = used_registers
 	used_mems_r, used_mems_w = used_memory
@@ -92,14 +107,8 @@ def taint(thread_id, used_registers, used_memory, memory, mnem):
 		for used_memory_cell in used_mems_r:
 			string_ptr = find_string(memory, used_memory_cell, settings['taint_data'])
 			if string_ptr:
-				i = 0
-				for ptr in xrange(string_ptr, string_ptr+len(settings['taint_data'])):
-					if not settings['taint_size'] or settings['taint_offset'] <= i < settings['taint_offset'] + settings['taint_size']:
-						taint_memory(thread_id, ptr)
-						tainted_data[ptr] = i
-					i += 1
-				if settings['verbose']:
-					print colorama.Fore.YELLOW + "[+] found tainted data in 0x%08x: %s" % (string_ptr, settings['taint_data']) + colorama.Fore.RESET
+				for callback in settings['on_found_string']:
+					callback(string_ptr, thread_id)
 
 	for used_reg in used_regs_r:
 		if used_reg and is_tainted_reg(thread_id, used_reg):
@@ -130,10 +139,12 @@ def taint(thread_id, used_registers, used_memory, memory, mnem):
 				if settings['verbose']:
 					print colorama.Fore.YELLOW + "[+] tainting register %s" % (used_reg,) + colorama.Fore.RESET
 				taint_reg(thread_id, used_reg)
+				spread_regs.add(used_reg)
 		for used_memory_cell in used_mems_w:
 			if settings['verbose']:
 				print colorama.Fore.YELLOW + "[+] tainting memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 			taint_memory(thread_id, used_memory_cell)
+			spread_mems.add(used_memory_cell)
 	else:
 		for used_reg in used_regs_w:
 			if is_tainted_reg(thread_id, used_reg):
@@ -144,7 +155,7 @@ def taint(thread_id, used_registers, used_memory, memory, mnem):
 					print colorama.Fore.YELLOW + "[-] release memory 0x%08x" % (used_memory_cell,) + colorama.Fore.RESET
 				untaint_memory(used_memory_cell)
 
-	return (tainted_regs, tainted_mems)
+	return (tainted_regs, tainted_mems, spread_regs, spread_mems)
 
 
 def init(taint_mem, taint_reg):
@@ -168,6 +179,9 @@ def init(taint_mem, taint_reg):
 		print colorama.Fore.LIGHTBLACK_EX + "[*] tainting register: %s" % reg.upper() + colorama.Fore.RESET
 		taint_reg(reg.lower())
 
+	if settings['taint_data']:
+		settings['on_found_string'] = [on_found_string]
+
 def analyze(trace):
 	global settings
 	taint_no = 0
@@ -187,17 +201,21 @@ def analyze(trace):
 
 		(used_registers, used_memory) = info
 		if settings['from_takt'] <= trace.cpu.takt:
-			(tainted_regs, tainted_mems) = taint(trace.cpu.thread_id, used_registers, used_memory, trace.io.ram, trace.cpu.disas())
+			(tainted_regs, tainted_mems, spread_regs, spread_mems) = taint(trace.cpu.thread_id, used_registers, used_memory, trace.io.ram, trace.cpu.disas())
 			if tainted_regs or tainted_mems:
 				if (settings['from_addr'] == 0 and settings['to_addr'] == 0) or settings['from_addr'] <= trace.cpu.eip_before <= settings['to_addr']:
 					taint_no += 1
 					if settings['limit'] == 0 or settings['limit'] >= taint_no:
-						yield (tainted_regs, tainted_mems)
+						yield (tainted_regs, tainted_mems, spread_regs, spread_mems)
 					else:
 						break
 		
 		if settings['to_takt'] and trace.cpu.takt >= settings['to_takt']:
 			break
+
+
+def highlight(haystack, needle):
+	return haystack.replace( "%x"%needle, colorama.Back.GREEN + colorama.Fore.BLACK + "%x"%needle + colorama.Back.RESET + colorama.Fore.GREEN, 1 )
 
 
 if __name__ == '__main__':
@@ -233,10 +251,10 @@ if __name__ == '__main__':
 			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:%s: %s;" % (taint_no, trace.cpu.takt, symbol, trace.cpu.instruction) + colorama.Fore.GREEN,
 		else:
 			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:0x%08x: %s;" % (taint_no, trace.cpu.takt, trace.cpu.eip_before, trace.cpu.instruction) + colorama.Fore.GREEN,
-		(tainted_regs, tainted_mems) = access
+		(tainted_regs, tainted_mems, spread_regs, spread_mems) = access
 		for tainted_reg in tainted_regs:
-			tainted_reg = CPU.get_full_register(tainted_reg)
-			print " %s=0x%08x," % ( tainted_reg.upper(), trace.cpu.get(tainted_reg) ),
+			full_tainted_reg = CPU.get_full_register(tainted_reg)
+			print highlight( " %s=0x%08x," % ( full_tainted_reg.upper(), trace.cpu[full_tainted_reg] ), trace.cpu[tainted_reg]),
 		mem_shown = 0
 		tainted_bytes = []
 		for tainted_mem in tainted_mems:

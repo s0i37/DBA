@@ -86,6 +86,27 @@ class CPU:
 			(self.rax_before, self.rcx_before, self.rdx_before, self.rbx_before, self.rsp_before, self.rbp_before, self.rsi_before, self.rdi_before) = map( lambda v: int(v, 16), regs.split(',') )
 		self.eflags_before = 0 # not implemented yet
 
+	def __getitem__(self, reg):
+		if reg in ('rax','rdx','rcx','rbx','rsp','rbp','rdi','rsi'):
+			return getattr(self, "{reg}_before".format(reg=reg))
+		elif reg in ('eax','edx','ecx','ebx','esp','ebp','edi','esi'):
+			if BITS == 32:
+				return getattr(self, "{reg}_before".format(reg=reg))
+			else:
+				reg = CPU.get_full_register(reg)
+				return getattr(self, "{reg}_before".format(reg=reg)) % 0x100000000
+		elif reg in ('ax','dx','cx','bx','sp','bp','di','si'):
+			reg = CPU.get_full_register(reg)
+			return getattr(self, "{reg}_before".format(reg=reg)) % 0x10000
+		elif reg in ('ah','dh','ch','bh'):
+			reg = CPU.get_full_register(reg)
+			return ( getattr(self, "{reg}_before".format(reg=reg)) >> 8 ) % 0x100
+		elif reg in ('al','dl','cl','bl'):
+			reg = CPU.get_full_register(reg)
+			return getattr(self, "{reg}_before".format(reg=reg)) % 0x100
+		else:
+			return 0xffffffff
+
 	def get(self, regname, when='before'):
 		val = self.__dict__.get( CPU.get_full_register(regname) + '_' + when )
 		return val if val != None else 0xffffffff
@@ -145,8 +166,8 @@ class CPU:
 				if index < 3:
 					return sub_registers[index:] # AX has [AH,AL]
 				else:
-					return sub_registers[index] # AH hasn't AL
-		return register
+					return [sub_registers[index]] # AH hasn't AL
+		return [register]
 
 	def get_used_regs(self):
 		readed_registers = set()
