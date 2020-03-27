@@ -77,15 +77,21 @@ feh out.png
 ./tree.py trace.txt symbols.csv
 ```
 
-- Taint:
+- Taint (data flow tracking):
 
 ```
 ./taint.py -taint_addr 95071:0xffc54324:4 tests/trace.txt       # taint 4 bytes in 0xffc54324 from 95071 takt
 
-./taint.py -taint_data testtest trace.txt                       # search and taint 'testtest' buffer
+./taint.py -taint_reg 95071:esi trace.txt                       # taint ESI starts from 95071 instruction
+
+./taint.py -taint_data 'qwerty' -module taintme ~/src/DBI/pin/trace.log     # search in memory and taint 'testtest'
 ```
 
-- Audit:
+- Concolic execution (taint + symbolic = concolic) (WIP):
+
+```./concolic.py -symbolize_data 'qwerty' -module taintme ~/src/DBI/pin/trace.log```
+
+- Audit (WIP):
 
 ```
 ./audit.py trace.txt        # implemented: umr_heap, uwc, uaf, oob_read_heap, oob_write_heap, doublefree
