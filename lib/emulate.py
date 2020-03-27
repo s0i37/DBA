@@ -397,17 +397,40 @@ class Trace:
 		self.modules = {}
 		self.symbols = {}
 		self.__line = ''
+		#self.__buf = ''
+		#self.i1 = 0
+		#self.i2 = 0
 
 	def step(self):
 		'''
 		load instruction
 		'''
 		was_instruction_loaded = False
+
+		'''
+		if not self.__buf:
+			self.__buf = self.trace.read()
+		'''
+
 		while True:
+			'''
+			if not self.__line:
+				self.i2 += self.__buf[self.i1:self.i1+1000].find('\n')
+				self.__line = self.__buf[self.i1:self.i2]
+				self.i2 += 1
+				self.i1 = self.i2
+			if not self.__line:
+				raise StopExecution
+			'''
+
+			
 			if not self.__line:
 				self.__line = self.trace.readline()
 			if not self.__line:
 				raise StopExecution
+
+			
+			#print self.__line
 			try:
 				if self.__line.startswith('[#]'):
 					self.__line = ''
@@ -440,8 +463,6 @@ class Trace:
 				pass
 			self.__line = ''
 
-		self.cpu.instruction = self.cpu.disas()
-
 	def instruction(self):
 		'''
 		get info about instruction (without emulation)
@@ -454,7 +475,7 @@ class Trace:
 
 		if self.cpu.takt and not self.cpu.takt % 10000:
 			stdout.write("\r" + " "*75)
-			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.instruction) + colorama.Fore.RESET )
+			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
 			stdout.flush()
 
 		used_registers = self.cpu.get_used_regs()
@@ -471,28 +492,28 @@ class Trace:
 		self.step()
 
 		if self.cpu.eip_before in self.breakpoints:
-			print "\n[*] 0x%08x: %s   EAX=%d" % (self.cpu.eip_before, self.cpu.instruction, self.cpu.eax_before)
+			print "\n[*] 0x%08x: %s   EAX=%d" % (self.cpu.eip_before, self.cpu.disas(), self.cpu.eax_before)
 			print "\n".join( map( hex, self.callstack[ self.cpu.thread_id ] ) )
 
 		if self.cpu.takt and not self.cpu.takt % 1000:
 			stdout.write("\r" + " "*75)
-			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.instruction) + colorama.Fore.RESET )
+			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
 			stdout.flush()
 			
-		if self.cpu.instruction.split()[0] in ('ret', 'call', 'int') or self.cpu.instruction.split()[0].startswith('j'):
-			if self.cpu.instruction.split()[0] == 'call':
+		if self.cpu.disas().split()[0] in ('ret', 'call', 'int') or self.cpu.disas().split()[0].startswith('j'):
+			if self.cpu.disas().split()[0] == 'call':
 				try:
 					self.callstack[ self.cpu.thread_id ].insert(0, self.cpu.eip_before)
 				except:
 					self.callstack[ self.cpu.thread_id ] = [ self.cpu.eip_before ]
-			elif self.cpu.instruction.split()[0] == 'ret':
+			elif self.cpu.disas().split()[0] == 'ret':
 				try:
 					self.callstack[ self.cpu.thread_id ].pop(0)
 				except:
 					pass
 			return # problem with emulation call/jmp/ret/int instructions
 
-		if self.cpu.instruction.split()[0] == 'sysenter':
+		if self.cpu.disas().split()[0] == 'sysenter':
 			print colorama.Fore.CYAN + "\n[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET,
 
 		self.io.save(self.cpu.eip_before, self.cpu.opcode)
