@@ -76,7 +76,7 @@ def solve(ast):
 def ir(instruction):
 	mnem = instruction.split()[0]
 	if mnem in ('mov', 'movzx'):
-		return "op1"
+		return "op2"
 	elif mnem == 'add':
 		return "(op1 + op2)"
 	elif mnem == 'sub':
@@ -95,25 +95,25 @@ def ir(instruction):
 	elif mnem in ('cmp', 'test'):
 		return "op1 ? op2"
 	elif mnem in ('jl', 'jb'):
-		return "cond < imm1"
+		return "cond <"
 	elif mnem in ('jnb', 'jnl'):
-		return "cond >= imm1"
+		return "cond >="
 	elif mnem in ('jbe', 'jle'):
-		return "cond <= imm1"
+		return "cond <="
 	elif mnem in ('jnbe', 'jnle'):
-		return "cond > imm1"
+		return "cond >"
 	elif mnem in ('jz', 'je'):
-		return "cond == 0"
+		return "cond =="
 	elif mnem in ('jnz', 'jne'):
-		return "cond != 0"
+		return "cond !="
 	elif mnem == 'js':
-		return "cond < 0"
+		return "cond <"
 	elif mnem == 'jns':
-		return "cond > 0"
+		return "cond >"
 	elif mnem == 'jp':
-		return "cond % 2 == 0"
+		return "cond %2=="
 	elif mnem == 'jnp':
-		return "cond % 2 != 0"
+		return "cond %2!="
 	elif mnem == 'jo':
 		pass
 	elif mnem == 'jno':
@@ -130,29 +130,30 @@ def get_operands(instruction):
 	operands = ' '.join( instruction.split()[1:] )
 	operands_type = {
 		'op1': {
-			'reg': [],
-			'mem': [],
-			'imm': []
+			'reg': '',
+			'mem': '',
+			'imm': ''
 		},
 		'op2': {
-			'reg': [],
-			'mem': [],
-			'imm': []
+			'reg': '',
+			'mem': '',
+			'imm': ''
 		}
 	}
 	directions = ['op2', 'op1']
 	for operand in operands.split(','):
 		direction = directions.pop()
 		if operand.find('[') != -1:
-			operands_type[direction]['mem'].append(operand)
+			operands_type[direction]['mem'] = operand
 		elif match('^[a-z]+', operand.strip()):
-			operands_type[direction]['reg'].append(operand)
+			operands_type[direction]['reg'] = operand
 		elif match('^[0-9]+', operand.strip()):
-			operands_type[direction]['imm'].append(operand)
+			operands_type[direction]['imm'] = operand
 	return operands_type
 	
 def concolic(access, instruction):
 	expression = ir(instruction)
+	operands = get_operands(instruction)
 	if not expression:
 		return
 	
@@ -160,14 +161,38 @@ def concolic(access, instruction):
 	except:	symbolic_registers[trace.cpu.thread_id] = Thread()
 
 	(tainted_regs, tainted_mems, spread_regs, spread_mems) = access
+
+	#symbolic
 	for tainted_reg in tainted_regs:
 		ast = symbolic_registers[trace.cpu.thread_id][tainted_reg]
-		expression = expression.replace("op1", "({ast})".format(ast=ast))
+		if operands['op1']['reg'].find(tainted_reg) != -1:
+			expression = expression.replace("op1", "({ast})".format(ast=ast))
+		elif operands['op2']['reg'].find(tainted_reg) != -1:
+			expression = expression.replace("op2", "({ast})".format(ast=ast))
 		break
 	for tainted_mem in tainted_mems:
 		ast = symbolic_memory[tainted_mem]
-		expression = expression.replace("op1", "({ast})".format(ast=ast))
+		if operands['op1']['mem']:
+			expression = expression.replace("op1", "({ast})".format(ast=ast))
+		if operands['op2']['mem']:
+			expression = expression.replace("op2", "({ast})".format(ast=ast))
 		break
+
+	#concrete
+	if expression.find('op1') != -1:
+		for (op_type,op_val) in operands['op1'].items():
+			if op_val:
+				if op_type == 'imm':
+					expression = expression.replace('op1', "{concrete}".format(concrete=op_val.strip()))
+				elif op_type == 'reg':
+					expression = expression.replace('op1', "{concrete}".format(concrete=hex(trace.cpu[op_val.strip()])))
+	if expression.find('op2') != -1:
+		for (op_type,op_val) in operands['op2'].items():
+			if op_val:
+				if op_type == 'imm':
+					expression = expression.replace('op2', "{concrete}".format(concrete=op_val.strip()))
+				elif op_type == 'reg':
+					expression = expression.replace('op2', "{concrete}".format(concrete=hex(trace.cpu[op_val.strip()])))
 
 	for spread_reg in spread_regs:
 		symbolic_registers[trace.cpu.thread_id][spread_reg] = expression
@@ -176,12 +201,10 @@ def concolic(access, instruction):
 		symbolic_memory[spread_mem] = expression
 		break
 
-	if expression.find('cond') != -1:
-		expression = expression.replace("cond", symbolic_registers[trace.cpu.thread_id].condition)
-		expression = expression.replace("imm1", symbolic_registers[trace.cpu.thread_id].compare)
-	
+	if expression.find('cond ') != -1:
+		expression = symbolic_registers[trace.cpu.thread_id].condition.replace('?', expression[5:])
+		
 	if expression.find('?') != -1:
-		symbolic_registers[trace.cpu.thread_id].compare = "imm"
 		symbolic_registers[trace.cpu.thread_id].condition = "{ast}".format(ast=expression)
 	
 	print instruction + "\t\t" + expression

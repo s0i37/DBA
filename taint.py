@@ -248,9 +248,9 @@ if __name__ == '__main__':
 		taint_no += 1
 		symbol = get_symbol(trace)
 		if symbol:
-			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:%s: %s;" % (taint_no, trace.cpu.takt, symbol, trace.cpu.instruction) + colorama.Fore.GREEN,
+			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:%s: %s;" % (taint_no, trace.cpu.takt, symbol, trace.cpu.disas()) + colorama.Fore.GREEN,
 		else:
-			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:0x%08x: %s;" % (taint_no, trace.cpu.takt, trace.cpu.eip_before, trace.cpu.instruction) + colorama.Fore.GREEN,
+			print colorama.Fore.LIGHTYELLOW_EX + "[+] %d:%d:0x%08x: %s;" % (taint_no, trace.cpu.takt, trace.cpu.eip_before, trace.cpu.disas()) + colorama.Fore.GREEN,
 		(tainted_regs, tainted_mems, spread_regs, spread_mems) = access
 		for tainted_reg in tainted_regs:
 			full_tainted_reg = CPU.get_full_register(tainted_reg)
