@@ -20,6 +20,15 @@ md = Cs( CS_ARCH_X86, {32: CS_MODE_32, 64: CS_MODE_64}[BITS] )
 class StopExecution(BaseException):
 	pass
 
+class BPX:
+	def __init__(self, callback, *opts):
+		self.callback = callback
+		self.opts = opts
+
+	def __call__(self, trace):
+		self.callback(trace, *self.opts)
+
+
 class Cache:
 	def __init__(self):
 		self.L2 = {}
@@ -77,7 +86,7 @@ class CPU:
 	def set_state(self, trace_line):
 		(pc,opcode,regs) = trace_line.split()
 		self.takt = int( pc.split(':')[0] )
-		self.eip_before = int( pc.split(':')[1], 16 )
+		self.eip_before = self.pc = int( pc.split(':')[1], 16 )
 		self.thread_id = int( pc.split(':')[2], 16 )
 		self.opcode = opcode[1:-1].decode('hex')
 		if BITS == 32:
@@ -392,7 +401,7 @@ class Trace:
 		self.io = MCH()
 		self.cpu.cache = self.io.cache = Cache()
 		self.io.ram = RAM()
-		self.breakpoints = set()
+		self.breakpoints = {}
 		self.callstack = {}
 		self.modules = {}
 		self.symbols = {}
@@ -472,6 +481,8 @@ class Trace:
 		self.io.readed_cells = set()
 		self.io.writed_cells = set()
 		self.step()
+		if self.cpu.pc in self.breakpoints.keys():
+			self.breakpoints[self.cpu.pc](self)
 
 		if self.cpu.takt and not self.cpu.takt % 10000:
 			stdout.write("\r" + " "*75)
@@ -491,7 +502,7 @@ class Trace:
 		'''
 		self.step()
 
-		if self.cpu.eip_before in self.breakpoints:
+		if self.cpu.eip_before in self.breakpoints.keys():
 			print "\n[*] 0x%08x: %s   EAX=%d" % (self.cpu.eip_before, self.cpu.disas(), self.cpu.eax_before)
 			print "\n".join( map( hex, self.callstack[ self.cpu.thread_id ] ) )
 

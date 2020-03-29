@@ -1,7 +1,7 @@
 #!/usr/bin/python2
 import argparse
 import taint
-from lib.emulate import CPU
+from lib.emulate import CPU, BPX
 from re import match
 
 parser = argparse.ArgumentParser( description='data flow analisys tool' )
@@ -70,9 +70,6 @@ def symbolize_string(string_ptr, thread_id):
 	if settings['verbose']:
 		print colorama.Fore.YELLOW + "[+] symbolized data in 0x%08x: %s" % (string_ptr, settings['taint_data']) + colorama.Fore.RESET
 
-def solve(ast):
-	pass
-
 def ir(instruction):
 	mnem = instruction.split()[0]
 	if mnem in ('mov', 'movzx'):
@@ -125,6 +122,26 @@ def ir(instruction):
 	elif mnem == 'jrcxz':
 		pass
 
+def get_opposite_condition(cond):
+	if cond == ">=":
+		return "<"
+	elif cond == "<=":
+		return ">"
+	elif cond == ">":
+		return "<="
+	elif cond == "==":
+		return "!="
+	elif cond == "!=":
+		return "=="
+	elif cond == "<":
+		return ">"
+	elif cond == ">":
+		return "<"
+	elif cond == "%2==":
+		return "%2!="
+	elif cond == "%2!=":
+		return "%2=="
+
 def get_operands(instruction):
 	mnem = instruction.split()[0]
 	operands = ' '.join( instruction.split()[1:] )
@@ -151,6 +168,10 @@ def get_operands(instruction):
 			operands_type[direction]['imm'] = operand
 	return operands_type
 	
+def solve(trace, equation):
+	print "[+] " + equation
+	trace.breakpoints = {}
+
 def concolic(access, instruction):
 	expression = ir(instruction)
 	operands = get_operands(instruction)
@@ -170,13 +191,20 @@ def concolic(access, instruction):
 		elif operands['op2']['reg'].find(tainted_reg) != -1:
 			expression = expression.replace("op2", "({ast})".format(ast=ast))
 		break
+	ast_mem = ''
+	i = 0
 	for tainted_mem in tainted_mems:
-		ast = symbolic_memory[tainted_mem]
+		ast = symbolic_memory.get(tainted_mem)
+		if not ast:
+			ast = "0x%02x" % trace.io.ram.get_byte(tainted_mem)
+		ast_mem += ("+({ast}<<%d)"%(i*8) if i else "({ast})" ).format(ast=ast)
+		i += 1
+	if ast_mem:
 		if operands['op1']['mem']:
-			expression = expression.replace("op1", "({ast})".format(ast=ast))
+			expression = expression.replace("op1", "({ast})".format(ast=ast_mem))
 		if operands['op2']['mem']:
-			expression = expression.replace("op2", "({ast})".format(ast=ast))
-		break
+			expression = expression.replace("op2", "({ast})".format(ast=ast_mem))
+		
 
 	#concrete
 	if expression.find('op1') != -1:
@@ -197,17 +225,26 @@ def concolic(access, instruction):
 	for spread_reg in spread_regs:
 		symbolic_registers[trace.cpu.thread_id][spread_reg] = expression
 		break
+	i = 0
 	for spread_mem in spread_mems:
-		symbolic_memory[spread_mem] = expression
-		break
+		if i:
+			symbolic_memory[spread_mem] = "(({ast}>>{shift}) % 0x100)".format(ast=expression, shift=i*8)
+		else:
+			symbolic_memory[spread_mem] = "({ast} % 0x100)".format(ast=expression)
+		i += 1
 
 	if expression.find('cond ') != -1:
-		expression = symbolic_registers[trace.cpu.thread_id].condition.replace('?', expression[5:])
-		
+		condition = expression[5:]
+		expression = symbolic_registers[trace.cpu.thread_id].condition.replace('?', condition)
+		branch_true = trace.cpu.pc + int(instruction.split()[1], 16)
+		branch_false = trace.cpu.pc + 2
+		trace.breakpoints[branch_true] = BPX(solve, expression)
+		trace.breakpoints[branch_false] = BPX(solve, expression.replace(condition, get_opposite_condition(condition)))
+	
 	if expression.find('?') != -1:
 		symbolic_registers[trace.cpu.thread_id].condition = "{ast}".format(ast=expression)
 	
-	print instruction + "\t\t" + expression
+	#print hex(trace.cpu.pc), instruction + "\t\t" + expression
 
 
 if __name__ == '__main__':
