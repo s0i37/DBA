@@ -2,6 +2,7 @@
 import argparse
 import taint
 from lib.emulate import CPU, BPX
+from z3 import *
 from re import match
 
 parser = argparse.ArgumentParser( description='data flow analisys tool' )
@@ -25,19 +26,21 @@ BITS = 64
 symbolic_memory = {}
 symbolic_registers = {}
 ast = {}
+input_bytes = bytearray()
 
 class Thread:
 	def __init__(self):
 		self.condition = ''
 		self.compare = ''
+
 	def __find_tainted_subreg(self, reg):
 		sub_regs = CPU.get_sub_registers( CPU.get_full_register(reg) )
 		sub_regs.reverse()
 		for reg in sub_regs:
 			if hasattr(self, reg):
 				return reg
+
 	def __getitem__(self, reg):
-		#import pdb;pdb.set_trace()
 		if reg in ('rax','rdx','rcx','rbx','rsp','rbp','rdi','rsi'):
 			return getattr(self, reg)
 		elif reg in ('eax','edx','ecx','ebx','esp','ebp','edi','esi'):
@@ -57,18 +60,22 @@ class Thread:
 			return "{reg} % 0x100".format(reg=getattr(self, reg))
 
 	def __setitem__(self, reg, val):
-		#print type(val), reg, val
 		setattr(self, reg, val)
 
-
+only_once = True
 def symbolize_string(string_ptr, thread_id):
+	global input_bytes, only_once
 	i = 0
 	for ptr in xrange(string_ptr, string_ptr+len(settings['taint_data'])):
 		if not settings['taint_size'] or settings['taint_offset'] <= i < settings['taint_offset'] + settings['taint_size']:
 			symbolic_memory[ptr] = "X%d"%i
+			if only_once:
+				exec("X{i} = BitVec('X{i}', 8)".format(i=i), globals())
+				input_bytes += "\x00"
 		i += 1
 	if settings['verbose']:
 		print colorama.Fore.YELLOW + "[+] symbolized data in 0x%08x: %s" % (string_ptr, settings['taint_data']) + colorama.Fore.RESET
+	only_once = False
 
 def ir(instruction):
 	mnem = instruction.split()[0]
@@ -88,6 +95,10 @@ def ir(instruction):
 		return "(op1 << op2)"
 	elif mnem == 'shr':
 		return "(op1 >> op2)"
+	elif mnem == 'inc':
+		return "op2 + 1"
+	elif mnem == 'dec':
+		return "op2 - 1"
 
 	elif mnem in ('cmp', 'test'):
 		return "op1 ? op2"
@@ -168,8 +179,29 @@ def get_operands(instruction):
 			operands_type[direction]['imm'] = operand
 	return operands_type
 	
-def solve(trace, equation):
-	print "[+] " + equation
+def generate_input(model):
+	out = input_bytes[:]
+	i = 0
+	for byte in model:
+		offset = int( byte.name()[1:] )
+		out[offset] = chr( int( str( model[byte] ) ) )
+	return out
+
+def safe_input(input_bytes, filename):
+	with open(filename, "wb") as o:
+		o.write(input_bytes)
+
+def solve(trace, addr_reach, equation, expression):
+	global solver
+	solver_copy = solver.translate(solver.ctx)
+	locals = globals
+	eval( "solver_copy.add( {equation} ) ".format(equation=equation) ) 	# new path
+	eval( "solver.add( {expression} ) ".format(expression=expression) ) 	# this path
+	if solver_copy.check():
+		solve = solver_copy.model()
+		filename = "concolic-{basic_block}.bin".format(basic_block=hex(addr_reach))
+		safe_input(generate_input(solve), filename)
+		print "[+] {filename} {equation}".format(filename=filename, equation=equation) 
 	trace.breakpoints = {}
 
 def concolic(access, instruction):
@@ -238,8 +270,9 @@ def concolic(access, instruction):
 		expression = symbolic_registers[trace.cpu.thread_id].condition.replace('?', condition)
 		branch_true = trace.cpu.pc + int(instruction.split()[1], 16)
 		branch_false = trace.cpu.pc + 2
-		trace.breakpoints[branch_true] = BPX(solve, expression)
-		trace.breakpoints[branch_false] = BPX(solve, expression.replace(condition, get_opposite_condition(condition)))
+		expression_opposite = expression.replace(condition, get_opposite_condition(condition))
+		trace.breakpoints[branch_true] = BPX(solve, branch_false, expression_opposite, expression)
+		trace.breakpoints[branch_false] = BPX(solve, branch_true, expression, expression_opposite)
 	
 	if expression.find('?') != -1:
 		symbolic_registers[trace.cpu.thread_id].condition = "{ast}".format(ast=expression)
@@ -248,6 +281,7 @@ def concolic(access, instruction):
 
 
 if __name__ == '__main__':
+	solver = Solver()
 	settings = vars(args)
 	taint.settings = settings
 	taint.init(args.taint_mem, args.taint_reg)
