@@ -217,6 +217,11 @@ def analyze(trace):
 def highlight(haystack, needle):
 	return haystack.replace( "%x"%needle, colorama.Back.GREEN + colorama.Fore.BLACK + "%x"%needle + colorama.Back.RESET + colorama.Fore.GREEN, 1 )
 
+def highlight_reg(fullreg, reg):
+	pass
+
+def highlight_mem(mem, ptr):
+	pass
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser( description='data flow analisys tool' )

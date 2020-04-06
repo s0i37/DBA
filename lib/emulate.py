@@ -1,6 +1,7 @@
 from unicorn import *
 from unicorn.x86_const import *
 from capstone import *
+from capstone.x86 import *
 from sys import stdout
 from os.path import basename
 import struct
@@ -82,6 +83,7 @@ class CPU:
 		self.md = md
 		self.md.detail = True
 		self.mu = mu
+		self.inst = None
 
 	def set_state(self, trace_line):
 		(pc,opcode,regs) = trace_line.split()
@@ -119,13 +121,6 @@ class CPU:
 	def get(self, regname, when='before'):
 		val = self.__dict__.get( CPU.get_full_register(regname) + '_' + when )
 		return val if val != None else 0xffffffff
-		
-	def disas(self):
-		mnem = ""
-		for inst in self.md.disasm(self.opcode, 0):
-			mnem = "%s %s" % (inst.mnemonic, inst.op_str)
-			break
-		return mnem
 
 	@staticmethod
 	def get_full_register(register):
@@ -178,17 +173,78 @@ class CPU:
 					return [sub_registers[index]] # AH hasn't AL
 		return [register]
 
+	def disas(self):
+		if not self.inst:
+			self.analyze()
+		return "%s %s" % (self.inst.mnemonic, self.inst.op_str)
+
+	def analyze(self):
+		for inst in self.md.disasm(self.opcode, 0):
+			self.inst = inst
+			break
+		return self
+
 	def get_used_regs(self):
 		readed_registers = set()
 		writed_registers = set()
-		for inst in self.md.disasm(self.opcode, 0):
-			(regs_read, regs_write) = inst.regs_access()
-			break
+		(regs_read, regs_write) = self.inst.regs_access()
 		for reg_read_id in regs_read:
-			readed_registers.add( inst.reg_name(reg_read_id) )
+			readed_registers.add( self.inst.reg_name(reg_read_id) )
 		for reg_write_id in regs_write:
-			writed_registers.add( inst.reg_name(reg_write_id) )
+			writed_registers.add( self.inst.reg_name(reg_write_id) )
+		return (readed_registers, writed_registers)
 
+	def get_used_regs__(self):
+		readed_registers = set()
+		writed_registers = set()
+		for operand in self.inst.operands:
+			if operand.type == X86_OP_REG:
+				if operand.access in (CS_AC_READ, CS_AC_READ|CS_AC_WRITE):
+					readed_registers.add( self.inst.reg_name( operand.value.reg ) )
+				elif operand.access == CS_AC_WRITE:
+					writed_registers.add( self.inst.reg_name( operand.value.reg ) )
+		return (readed_registers, writed_registers)
+
+	def analyze_operands(self):
+		readed_registers = set()
+		writed_registers = set()
+		op = 0
+		for operand in self.inst.operands:
+			if operand.access == CS_AC_READ:
+				access = "READ"
+			elif operand.access == CS_AC_WRITE:
+				access = "WRITE"
+			elif operand.access == CS_AC_READ|CS_AC_WRITE:
+				access = "READ|WRITE"
+			else:
+				access = ""
+			#print "operands[{op}].access: {access}".format(op=op, access=access)
+
+			size = operand.size
+			#print "operands[{op}].size: {size}".format(op=op, size=size)
+		
+			if operand.type == X86_OP_REG:
+				reg = self.inst.reg_name( operand.value.reg )
+				#print "operands[{op}].type: REG = {reg}".format(op=op, reg=reg)
+				if access == "READ":
+					readed_registers.add(reg)
+				elif access == "WRITE":
+					writed_registers.add(reg)
+				elif access == "READ|WRITE":
+					readed_registers.add(reg)
+					writed_registers.add(reg)
+			elif operand.type == X86_OP_IMM:
+				imm = operand.value.imm
+				#print "operands[{op}].type: IMM = {imm}".format(op=op, imm=imm)
+			elif operand.type == X86_OP_MEM:
+				#print "operands[{op}].type: MEM".format(op=op)
+				if operand.value.mem.disp != 0:
+					pass
+					#print "\t" + "operands[{op}].mem.disp: {val}".format(op=op, val=hex(operand.value.mem.disp))
+				if operand.value.mem.base != 0:
+					pass
+					#print "\t" + "operands[{op}].mem.base: REG = {val}".format(op=op, val=instr.reg_name( operand.value.mem.base ))
+			op += 1
 		return (readed_registers, writed_registers)
 
 	def execute(self):
@@ -489,7 +545,7 @@ class Trace:
 			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
 			stdout.flush()
 
-		used_registers = self.cpu.get_used_regs()
+		used_registers = self.cpu.analyze().get_used_regs()
 		used_memory = (self.io.readed_cells, self.io.writed_cells)
 		return (used_registers, used_memory)
 
@@ -530,7 +586,7 @@ class Trace:
 		self.io.save(self.cpu.eip_before, self.cpu.opcode)
 		self.io.readed_cells = set()
 		self.io.writed_cells = set()
-		used_registers = self.cpu.get_used_regs()
+		used_registers = self.cpu.analyze().get_used_regs()
 		self.cpu.execute()
 		used_memory = (self.io.readed_cells, self.io.writed_cells)
 
