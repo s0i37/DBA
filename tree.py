@@ -4,9 +4,11 @@ from os import path
 import argparse
 
 
-parser = argparse.ArgumentParser( description='data flow analisys tool' )
+parser = argparse.ArgumentParser( description='show calls tree' )
 parser.add_argument("tracefile", type=str, help="trace.txt")
 parser.add_argument("-deep", type=int, default=-1, help="print calls not deeper then N")
+parser.add_argument("-thread", type=int, default=-1, help="print calls only of thread")
+parser.add_argument("-module", type=str, default='', help="print calls only for module")
 args = parser.parse_args()
 
 def try_ascii(hexstr):
@@ -20,21 +22,18 @@ def try_ascii(hexstr):
 	return out
 
 
-modules = {}
-functions = {}
 
-
-def get_relative(addr):
+def get_module(modules, addr):
 	for module_name,module_range in modules.items():
-		start,end = module_range
+		(start,end) = module_range
 		if start <= addr <= end:
-			return module_name, addr - start
-	return (None,0)
+			return path.basename(module_name.replace('\\','/'))
 
-def get_func_name(addr):
-	for func_addr,func_name in functions.items():
-		if func_addr == addr:
-			return func_name
+def get_symbol(symbols, addr):
+	for symbol_name,symbol_range in symbols.items():
+		(start,end) = symbol_range
+		if addr == start:
+			return symbol_name
 
 
 
@@ -54,17 +53,18 @@ with Trace( open(args.tracefile) ) as trace:
 				threads[thr]['called'] = trace.cpu.eip_before
 
 				addr = threads[thr]['called']
-				func_name = get_func_name(addr)
-				if func_name:
-					func = func_name
+
+				module = get_module(trace.modules, addr) or ""
+
+				symbol = get_symbol(trace.symbols, addr)
+				if symbol:
+					func = symbol
 				else:
-	#				module,addr = get_relative(addr)
-	#				if module:
-	#					func = "%s+0x%x" % (module, addr)
-	#				else:
 					func = "0x%08x" % threads[thr]['called']
 				if args.deep < 0 or args.deep >= threads[thr]['deep']:
-					print "%02d:%d:%06d" % (threads[thr]['deep'], thr, execs) + " "*threads[thr]['deep'] + func + '()'
+					if args.thread == -1 or args.thread == thr:
+						if not args.module or args.module.lower() == module.lower():
+							print "%02d:%d:%06d" % (threads[thr]['deep'], thr, execs) + " " + " "*threads[thr]['deep'] + (module+"!" if module else "") + func + '()'
 
 			mnem = trace.cpu.disas()
 			if mnem.split()[0] == 'call':
