@@ -73,7 +73,7 @@ def get_coverage(tracefile):
 	with Trace( open(tracefile) ) as trace:
 		try:
 			while True:
-				trace.instruction()
+				trace.step()
 				thr = trace.cpu.thread_id
 				if not current_function:
 					current_function = functions.get(trace.cpu.eip_before)
