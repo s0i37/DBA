@@ -96,6 +96,7 @@ class CPU:
 		elif BITS == 64:
 			(self.rax_before, self.rcx_before, self.rdx_before, self.rbx_before, self.rsp_before, self.rbp_before, self.rsi_before, self.rdi_before) = map( lambda v: int(v, 16), regs.split(',') )
 		self.eflags_before = 0 # not implemented yet
+		self.inst = None
 
 	def __getitem__(self, reg):
 		if reg in ('rax','rdx','rcx','rbx','rsp','rbp','rdi','rsi'):
@@ -466,6 +467,10 @@ class Trace:
 		#self.i1 = 0
 		#self.i2 = 0
 
+	def cont(self):
+		while True:
+			self.step()
+
 	def step(self):
 		'''
 		load instruction
@@ -528,6 +533,15 @@ class Trace:
 				pass
 			self.__line = ''
 
+
+		if self.cpu.pc in self.breakpoints.keys():
+			self.breakpoints[self.cpu.pc](self)
+
+		if self.cpu.takt and not self.cpu.takt % 10000:
+			stdout.write("\r" + " "*75)
+			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
+			stdout.flush()
+
 	def instruction(self):
 		'''
 		get info about instruction (without emulation)
@@ -537,13 +551,6 @@ class Trace:
 		self.io.readed_cells = set()
 		self.io.writed_cells = set()
 		self.step()
-		if self.cpu.pc in self.breakpoints.keys():
-			self.breakpoints[self.cpu.pc](self)
-
-		if self.cpu.takt and not self.cpu.takt % 10000:
-			stdout.write("\r" + " "*75)
-			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
-			stdout.flush()
 
 		used_registers = self.cpu.analyze().get_used_regs()
 		used_memory = (self.io.readed_cells, self.io.writed_cells)
