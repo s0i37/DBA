@@ -40,7 +40,7 @@ class Cache:
 			self.set_byte( addr+i, ord(val[i]) )
 
 	def get_byte(self,addr):
-		return self.L2.get(addr) or 0x00
+		return self.L2.get(addr)
 
 	def set_byte(self,addr,val):
 		self.L2[addr] = val
@@ -91,6 +91,7 @@ class CPU:
 		self.eip_before = self.pc = int( pc.split(':')[1], 16 )
 		self.thread_id = int( pc.split(':')[2], 16 )
 		self.opcode = opcode[1:-1].decode('hex')
+		self.cache[self.pc] = self.opcode
 		if BITS == 32:
 			(self.eax_before, self.ecx_before, self.edx_before, self.ebx_before, self.esp_before, self.ebp_before, self.esi_before, self.edi_before) = map( lambda v: int(v, 16), regs.split(',') )
 		elif BITS == 64:
@@ -298,6 +299,15 @@ class CPU:
 			self.exception = True
 			#print colorama.Fore.LIGHTBLACK_EX + "\n[!] %s: %s" % ( self.disas(), str(e) ) + colorama.Fore.RESET,
 
+class Page:
+	R = 4
+	W = 2
+	X = 1
+	def __init__(self, addr):
+		self.start = (addr >> 12) << 12
+		self.size = 4096
+		self.end = self.start + self.size
+		self.perm = 0
 
 class MCH:
 	'''
@@ -311,11 +321,13 @@ class MCH:
 		self.readed_cells = set()
 		self.writed_cells = set()
 		self.allocated_regions = set()
+		self.pages = {}
 		self.cache = None
 		self.ram = None
 
 	def save_state(self, trace_line):
 		(pc,address,direction,value) = trace_line.split()
+		pc = int(pc.split(':')[1], 16)
 		address = int( address[1:-1], 16 )
 		size = len(value[2:])/2
 
@@ -335,15 +347,22 @@ class MCH:
 
 		if value:
 			if direction == '->':
-				self.save(address, value)
+				base = self.allocate(address)
+				self.pages[base].perm |= Page.R
+				#self.save(address, value) # for Unicorn
 				self.ram[address] = value
 				for cell in xrange(address, address+size):
 					self.readed_cells.add(cell)
 			elif direction == '<-':
-				self.allocate(address)
+				base = self.allocate(address)
+				self.pages[base].perm |= Page.W
 				self.ram[address] = value
 				for cell in xrange(address, address+size):
 					self.writed_cells.add(cell)
+
+		base = self.allocate(pc)
+		self.pages[base].perm |= Page.R
+		self.pages[base].perm |= Page.X
 
 	def save_memory(self, trace_line):
 		(pc,address,value) = trace_line.split()
@@ -356,7 +375,7 @@ class MCH:
 		#print "[debug] access memory 0x%08x:%d" % (address, size)
 		if access in (UC_MEM_WRITE,):
 			for cell in xrange(address, address+size):
-				self.writed_cells.add(cell)
+				self.writepagesd_cells.add(cell)
 			if size == 1:
 				value = struct.pack( "B", value)
 			elif size == 2:
@@ -393,8 +412,10 @@ class MCH:
 		region <<= 12
 		if not region in self.allocated_regions:
 			#print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
-			self.mu.mem_map( region, PAGE_SIZE )
+			#self.mu.mem_map( region, PAGE_SIZE )
 			self.allocated_regions.add( region )
+			self.pages[region] = Page(region)
+		return region
 
 	def free(self):
 		for region in self.allocated_regions:
@@ -412,24 +433,31 @@ class RAM:
 
 	def __setitem__(self,attr,val):
 		addr = attr
-		for i in xrange( len(val) ):
-			self.set_byte( addr+i, ord(val[i]) )
+		size = len(val)
+		for i in xrange(size):
+			self.set_byte( addr+i, ord(val[size-i-1]) )
 
 	def get_byte(self,addr):
-		return self.mem.get(addr) or 0x00
+		return self.mem.get(addr)
 
 	def set_byte(self,addr,val):
 		self.mem[addr] = val
 
 	def get_word(self,addr):
-		return (self.get_byte(addr+1) << 8) + self.get_byte(addr)
+		try:
+			return (self.get_byte(addr+1) << 8) + self.get_byte(addr)
+		except:
+			return None
 
 	def set_word(self,addr,val):
 		self.mem[addr] = val % 0x100
 		self.mem[addr+1] = ( val >> 8 ) % 0x100
 
 	def get_dword(self,addr):
-		return (self.get_word(addr+2) << 16) + self.get_word(addr)
+		try:
+			return (self.get_word(addr+2) << 16) + self.get_word(addr)
+		except:
+			return None
 
 	def set_dword(self,addr,val):
 		self.mem[addr] = val % 0x100
@@ -438,7 +466,10 @@ class RAM:
 		self.mem[addr+3] = ( val >> 24 ) % 0x100
 
 	def get_qword(self,addr):
-		return (self.get_dword(addr+4) << 32) + self.get_dword(addr)
+		try:
+			return (self.get_dword(addr+4) << 32) + self.get_dword(addr)
+		except:
+			return None
 
 	def set_qword(self,addr,val):
 		self.mem[addr] = val % 0x100
@@ -462,6 +493,7 @@ class Trace:
 		self.callstack = {}
 		self.modules = {}
 		self.symbols = {}
+		self.reverse = False
 		self.__line = ''
 		#self.__buf = ''
 		#self.i1 = 0
@@ -606,3 +638,19 @@ class Trace:
 
 	def __exit__(self, exc_type, exc_val, exc_tb):
 		self.trace.close()
+
+
+def memmap(trace):
+	bases = trace.io.pages.keys()
+	bases.sort()
+	for base in bases:
+		yield trace.io.pages[base]
+
+def read_mem(trace, addr, size):
+	_bytes = []
+	for a in xrange(addr, addr+size):
+		byte = trace.io.ram.get_byte(a)
+		if byte == None:
+			byte = trace.io.cache.get_byte(a)
+		_bytes.append(byte)
+	return _bytes
