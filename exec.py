@@ -1,6 +1,6 @@
 #!/usr/bin/python2
 import argparse
-from lib.emulate import Trace, BPX, memmap as _memmap, read_mem as _read_mem
+from lib.emulate import Trace, BPX, BPM, memmap as _memmap, read_mem as _read_mem
 from ipdb import set_trace
 from capstone import *
 from capstone.x86 import *
@@ -9,7 +9,7 @@ from capstone.x86 import *
 parser = argparse.ArgumentParser( description='replay execution trace' )
 parser.add_argument("tracefile", type=str, help="trace.log")
 parser.add_argument("-bpx", type=str, dest="bpx", default='', help="breakpoint on execute [takt:]address[:thread]")
-parser.add_argument("-bpm", type=str, dest="bpm", default='', help="breakpoint on memory [takt:]address[:thread]")
+parser.add_argument("-bpm", type=str, dest="bpm", default='', help="breakpoint on memory address[:read|write]")
 args = parser.parse_args()
 
 md = Cs(CS_ARCH_X86, CS_MODE_64)
@@ -29,6 +29,17 @@ def get_bpx(bpx):
 	elif len(param) == 1:
 		addr = int(param[0])
 	return (takt, addr, thr)
+
+def get_bpm(bpm):
+	param = bpm.split(':')
+	addr = None
+	op = 'read'
+	if len(param) == 2:
+		addr = int(param[0])
+		op = param[1]
+	elif len(param) == 1:
+		addr = int(param[0])
+	return (addr, op)
 
 def HEX(val):
 	#return "0x%08x" % val
@@ -61,22 +72,36 @@ def hexdump(addr, len=0x20):
 	for byte in _read_mem(trace, addr, len):
 		if a % 0x10 == 0:
 			print "\n0x%08x: " % a,
-		print "%02X " % byte if byte else "?? ",
+		print "%02X " % byte if byte != None else "?? ",
 		a += 1
 	if a % 0x10 != 0:
 		for a in xrange(addr+len, end):
 			print "** ",
 	print ""
 
-def stack(size=0x80):
-	addr = trace.cpu['rsp']
+def stack(size=0x80, addr=None):
+	if not addr:
+		addr = trace.cpu['rsp']
 	step = 8
 	for a in xrange(addr, addr+size, step):
 		qword = trace.io.ram.get_qword(a)
-		if qword:
+		if qword != None:
 			print "{addr}: {val}".format(addr=HEX(a), val=HEX(qword))
 		else:
 			print "{addr}: {val}".format(addr=HEX(a), val="????????????????")
+
+def backtrace(deep=30):
+	frame = trace.cpu['rbp']
+	frame_prev = frame
+	while deep > 0:
+		func = trace.io.ram.get_qword(frame+8)
+		frame = trace.io.ram.get_qword(frame)
+		print HEX(func)
+		if abs(frame-frame_prev) > 0x1000 or frame < frame_prev:
+			break
+		deep -= 1
+		frame_prev = frame
+
 
 def modules():
 	columns = []
@@ -106,7 +131,8 @@ def memmap(addr=None):
 			return '---'
 	for page in _memmap(trace):
 		if not addr or page.start <= addr < page.end:
-			print "{start} {end} {perm}".format(start=hex(page.start), end=hex(page.end), perm=to_str(page.perm))
+			print "{start} {end} {perm} \t r:{r} w:{w} x:{x}".format(start=hex(page.start), end=hex(page.end), perm=to_str(page.perm),
+				r=page.reads, w=page.writes, x=page.execs)
 
 
 def symbols(module=None):
@@ -132,34 +158,56 @@ def symbol(symbol):
 			print "{base} {symbol}".format(base=hex(trace.symbols[symbol_name][0]), symbol=symbol_name)
 			break
 
+def mem_access():
+	for readed_cell in trace.io.readed_cells:
+		print "R: {cell}".format(cell=HEX(readed_cell))
+	for writed_cell in trace.io.writed_cells:
+		print "W: {cell}".format(cell=HEX(writed_cell))
 
-def stop(trace, takt, thread_id):
+
+def on_exec(trace, takt, thread_id):
 	if not takt or takt == trace.cpu.takt:
 		if not thread_id or thread_id.cpu.thread_id:
 			locals = globals
 			print ""
 			disas()
 			regs()
+			mem_access()
 			set_trace()
+
+def on_mem(trace, access_type, access_allow):
+	if access_type == access_allow:
+		locals = globals
+		print ""
+		disas()
+		regs()
+		mem_access()
+		set_trace()
 
 def si():
 	trace.step()
 	disas()
 
 def bpx(addr, thr=None, takt=None):
-	trace.breakpoints[addr] = BPX(stop, takt, thr)
+	trace.bpx[addr] = BPX(on_exec, takt, thr)
+
+def bpm(addr, op='read'):
+	trace.bpm[addr] = BPM(on_mem, op)
 
 def del_bpx(addr):
-	del trace.breakpoints[addr]
+	del trace.bpx[addr]
 
 def list_bpx():
-	for addr in trace.breakpoints.keys():
+	for addr in trace.bpx.keys():
 		print hex(addr)
 
 with Trace( open(args.tracefile) ) as trace:
 	if args.bpx:
 		takt,addr,thr = get_bpx(args.bpx)
-		trace.breakpoints[addr] = BPX(stop, takt, thr)
+		trace.bpx[addr] = BPX(on_exec, takt, thr)
+	if args.bpm:
+		addr,op = get_bpm(args.bpm)
+		trace.bpm[addr] = BPM(on_mem, op)
 	
 	while True:
 		try:

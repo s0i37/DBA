@@ -8,7 +8,7 @@ import struct
 import string
 import colorama
 
-__version__ = '0.16'
+__version__ = '0.17'
 
 PAGE_SIZE = 0x1000
 #BITS = 32
@@ -29,7 +29,15 @@ class BPX:
 	def __call__(self, trace):
 		self.callback(trace, *self.opts)
 
+class BPM:
+	def __init__(self, callback, *opts):
+		self.callback = callback
+		self.opts = opts
 
+	def __call__(self, trace, access_type):
+		self.callback(trace, access_type, *self.opts)
+
+'''
 class Cache:
 	def __init__(self):
 		self.L2 = {}
@@ -73,7 +81,7 @@ class Cache:
 		self.L2[addr+5] = ( val >> 40 ) % 0x100
 		self.L2[addr+6] = ( val >> 48 ) % 0x100
 		self.L2[addr+7] = ( val >> 56 ) % 0x100
-
+'''
 
 class CPU:
 	def __init__(self):
@@ -308,6 +316,9 @@ class Page:
 		self.size = 4096
 		self.end = self.start + self.size
 		self.perm = 0
+		self.reads = 0
+		self.writes = 0
+		self.execs = 0
 
 class MCH:
 	'''
@@ -349,6 +360,7 @@ class MCH:
 			if direction == '->':
 				base = self.allocate(address)
 				self.pages[base].perm |= Page.R
+				self.pages[base].reads += 1
 				#self.save(address, value) # for Unicorn
 				self.ram[address] = value
 				for cell in xrange(address, address+size):
@@ -356,6 +368,7 @@ class MCH:
 			elif direction == '<-':
 				base = self.allocate(address)
 				self.pages[base].perm |= Page.W
+				self.pages[base].writes += 1
 				self.ram[address] = value
 				for cell in xrange(address, address+size):
 					self.writed_cells.add(cell)
@@ -363,6 +376,7 @@ class MCH:
 		base = self.allocate(pc)
 		self.pages[base].perm |= Page.R
 		self.pages[base].perm |= Page.X
+		self.pages[base].execs += 1
 
 	def save_memory(self, trace_line):
 		(pc,address,value) = trace_line.split()
@@ -383,7 +397,7 @@ class MCH:
 			elif size == 4:
 				value = struct.pack( "<I", value)
 			elif size == 8:
-				value = struct.pack( "<q", value)
+				value = struct.pack( "<Q", value)
 			self.cache[address] = value
 		else:
 			for cell in xrange(address, address+size):
@@ -435,7 +449,7 @@ class RAM:
 		addr = attr
 		size = len(val)
 		for i in xrange(size):
-			self.set_byte( addr+i, ord(val[size-i-1]) )
+			self.set_byte( addr+i, ord(val[i]) )
 
 	def get_byte(self,addr):
 		return self.mem.get(addr)
@@ -487,17 +501,15 @@ class Trace:
 		self.trace = trace
 		self.cpu = CPU()
 		self.io = MCH()
-		self.cpu.cache = self.io.cache = Cache()
-		self.io.ram = RAM()
-		self.breakpoints = {}
-		self.callstack = {}
+		#self.cpu.cache = self.io.cache = Cache()
+		self.io.ram = self.cpu.cache = RAM()
+		self.bpx = {}
+		self.bpm = {}
+		#self.callstack = {}
 		self.modules = {}
 		self.symbols = {}
 		self.reverse = False
 		self.__line = ''
-		#self.__buf = ''
-		#self.i1 = 0
-		#self.i2 = 0
 
 	def cont(self):
 		while True:
@@ -507,27 +519,26 @@ class Trace:
 		'''
 		load instruction
 		'''
+		self.io.readed_cells = set()
+		self.io.writed_cells = set()
+
 		was_instruction_loaded = False
 
-		'''
-		if not self.__buf:
-			self.__buf = self.trace.read()
-		'''
-
 		while True:
-			'''
-			if not self.__line:
-				self.i2 += self.__buf[self.i1:self.i1+1000].find('\n')
-				self.__line = self.__buf[self.i1:self.i2]
-				self.i2 += 1
-				self.i1 = self.i2
-			if not self.__line:
-				raise StopExecution
-			'''
-
 			
 			if not self.__line:
-				self.__line = self.trace.readline()
+				if not self.reverse:
+					self.__line = self.trace.readline()
+				else:
+					line = ""
+					while True:
+						self.trace.seek(-2,1)
+						ch = self.trace.read(1)
+						line += ch
+						if ch == '\n':
+							self.__line = line[::-1]
+							break
+
 			if not self.__line:
 				raise StopExecution
 
@@ -566,8 +577,30 @@ class Trace:
 			self.__line = ''
 
 
-		if self.cpu.pc in self.breakpoints.keys():
-			self.breakpoints[self.cpu.pc](self)
+		if self.cpu.pc in self.bpx.keys():
+			self.bpx[self.cpu.pc](self)
+
+#		if set(self.io.readed_cells) & set(self.bpm.keys()):
+#			for mem in set(self.io.readed_cells) & set(self.bpm.keys()):
+#				self.bpm[mem](self, 'read')
+#		if set(self.io.writed_cells) & set(self.bpm.keys()):
+#			for mem in set(self.io.writed_cells) & set(self.bpm.keys()):
+#				self.bpm[mem](self, 'write')
+
+		if self.bpm.keys():
+			for mem in self.bpm.keys():
+				if mem in self.io.readed_cells:
+					self.bpm[mem](self, 'read')
+				if mem in self.io.writed_cells:
+					self.bpm[mem](self, 'write')
+			
+	#		for readed_cell in self.io.readed_cells:
+	#			if readed_cell in self.bpm.keys():
+	#				self.bpm[readed_cell](self, 'read')
+	#		for writed_cell in self.io.writed_cells:
+	#			if writed_cell in self.bpm.keys():
+	#				self.bpm[writed_cell](self, 'write')
+
 
 		if self.cpu.takt and not self.cpu.takt % 10000:
 			stdout.write("\r" + " "*75)
@@ -580,12 +613,11 @@ class Trace:
 
 		:return: (usable_registers, usable_memory)
 		'''
-		self.io.readed_cells = set()
-		self.io.writed_cells = set()
 		self.step()
 
 		used_registers = self.cpu.analyze().get_used_regs()
 		used_memory = (self.io.readed_cells, self.io.writed_cells)
+
 		return (used_registers, used_memory)
 
 	def execute(self):
@@ -597,7 +629,7 @@ class Trace:
 		'''
 		self.step()
 
-		if self.cpu.eip_before in self.breakpoints.keys():
+		if self.cpu.eip_before in self.bpx.keys():
 			print "\n[*] 0x%08x: %s   EAX=%d" % (self.cpu.eip_before, self.cpu.disas(), self.cpu.eax_before)
 			print "\n".join( map( hex, self.callstack[ self.cpu.thread_id ] ) )
 
@@ -649,8 +681,5 @@ def memmap(trace):
 def read_mem(trace, addr, size):
 	_bytes = []
 	for a in xrange(addr, addr+size):
-		byte = trace.io.ram.get_byte(a)
-		if byte == None:
-			byte = trace.io.cache.get_byte(a)
-		_bytes.append(byte)
+		_bytes.append( trace.io.ram.get_byte(a) )
 	return _bytes
