@@ -1,9 +1,10 @@
 #!/usr/bin/python2
 import argparse
-from lib.emulate import Trace, BPX, BPM, memmap as _memmap, read_mem as _read_mem
+from lib.emulate import Trace, BPX, BPM, memmap as _memmap, read_mem as _read_mem, get_symbol, get_module
 from ipdb import set_trace
 from capstone import *
 from capstone.x86 import *
+from os.path import basename
 
 
 parser = argparse.ArgumentParser( description='replay execution trace' )
@@ -50,7 +51,7 @@ def disas(addr=None):
 		addr = trace.cpu.pc
 	code = ''
 	for byte in _read_mem(trace, addr, 30):
-		if not byte:
+		if byte == None:
 			break
 		code += chr(byte)
 	for instr in md.disasm(code, trace.cpu.pc):
@@ -91,22 +92,22 @@ def stack(size=0x80, addr=None):
 			print "{addr}: {val}".format(addr=HEX(a), val="????????????????")
 
 def backtrace(deep=30):
-	frame = trace.cpu['rbp']
-	frame_prev = frame
-	while deep > 0:
-		func = trace.io.ram.get_qword(frame+8)
-		frame = trace.io.ram.get_qword(frame)
-		print HEX(func)
-		if abs(frame-frame_prev) > 0x1000 or frame < frame_prev:
-			break
-		deep -= 1
-		frame_prev = frame
-
+	for thr in trace.callstack.keys():
+		print "callstack thread {thr}:".format(thr=hex(thr))
+		i = 0
+		for function in trace.callstack[thr]:
+			symbol = get_symbol(trace, function)
+			module = get_module(trace, function)
+			i += 1
+			if i >= deep:
+				print "..."
+				break
+			print " " + ("{module}.{symbol}".format(module=basename(module.name.replace('\\','/')), symbol=symbol) if module and symbol else HEX(function))
 
 def modules():
 	columns = []
-	for module in trace.modules.keys():
-		columns.append( (trace.modules[module][0], module) )
+	for module in trace.modules:
+		columns.append( (module.start, module.name) )
 
 	for column in sorted(columns, key=lambda cols: cols[0], reverse=False):
 		print "{base} {module}".format(base=hex(column[0]), module=column[1])
@@ -131,17 +132,19 @@ def memmap(addr=None):
 			return '---'
 	for page in _memmap(trace):
 		if not addr or page.start <= addr < page.end:
-			print "{start} {end} {perm} \t r:{r} w:{w} x:{x}".format(start=hex(page.start), end=hex(page.end), perm=to_str(page.perm),
-				r=page.reads, w=page.writes, x=page.execs)
+			name = page.module.name if page.module else "" 
+			print "{start} {end} {perm} \t r:{r} w:{w} x:{x} \t {name}".format(start=hex(page.start), end=hex(page.end), perm=to_str(page.perm),
+				r=page.reads, w=page.writes, x=page.execs,
+				name=name,)
 
 
 def symbols(module=None):
 	columns = []
 	(start,end) = (0,0)
 	if module:
-		for module_name in trace.modules.keys():
-			if module_name.lower().find(module.lower()) != -1:
-				(start,end) = trace.modules[module_name]
+		for _module in trace.modules:
+			if _module.name.lower().find(module.lower()) != -1:
+				(start,end) = (_module.start, _module.end)
 				break
 
 	for symbol in trace.symbols.keys():
@@ -187,6 +190,8 @@ def on_mem(trace, access_type, access_allow):
 def si():
 	trace.step()
 	disas()
+	regs()
+	mem_access()
 
 def bpx(addr, thr=None, takt=None):
 	trace.bpx[addr] = BPX(on_exec, takt, thr)
@@ -202,6 +207,7 @@ def list_bpx():
 		print hex(addr)
 
 with Trace( open(args.tracefile) ) as trace:
+	trace.callstack = {}
 	if args.bpx:
 		takt,addr,thr = get_bpx(args.bpx)
 		trace.bpx[addr] = BPX(on_exec, takt, thr)

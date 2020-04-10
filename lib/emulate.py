@@ -307,6 +307,12 @@ class CPU:
 			self.exception = True
 			#print colorama.Fore.LIGHTBLACK_EX + "\n[!] %s: %s" % ( self.disas(), str(e) ) + colorama.Fore.RESET,
 
+class Module:
+	def __init__(self, name):
+		self.name = name
+		self.start = None
+		self.end = None
+
 class Page:
 	R = 4
 	W = 2
@@ -319,6 +325,7 @@ class Page:
 		self.reads = 0
 		self.writes = 0
 		self.execs = 0
+		self.module = None
 
 class MCH:
 	'''
@@ -341,6 +348,7 @@ class MCH:
 		pc = int(pc.split(':')[1], 16)
 		address = int( address[1:-1], 16 )
 		size = len(value[2:])/2
+		page = None
 
 		try:
 			if size == 1:
@@ -358,25 +366,29 @@ class MCH:
 
 		if value:
 			if direction == '->':
-				base = self.allocate(address)
-				self.pages[base].perm |= Page.R
-				self.pages[base].reads += 1
+				region = (address >> 12) << 12
+				page = self.allocate(region)
+				self.pages[region].perm |= Page.R
+				self.pages[region].reads += 1
 				#self.save(address, value) # for Unicorn
 				self.ram[address] = value
 				for cell in xrange(address, address+size):
 					self.readed_cells.add(cell)
 			elif direction == '<-':
-				base = self.allocate(address)
-				self.pages[base].perm |= Page.W
-				self.pages[base].writes += 1
+				region = (address >> 12) << 12
+				page = self.allocate(region)
+				self.pages[region].perm |= Page.W
+				self.pages[region].writes += 1
 				self.ram[address] = value
 				for cell in xrange(address, address+size):
 					self.writed_cells.add(cell)
 
-		base = self.allocate(pc)
-		self.pages[base].perm |= Page.R
-		self.pages[base].perm |= Page.X
-		self.pages[base].execs += 1
+		region = (address >> 12) << 12
+		self.allocate(region)
+		self.pages[region].perm |= Page.R
+		self.pages[region].perm |= Page.X
+		self.pages[region].execs += 1
+		return page
 
 	def save_memory(self, trace_line):
 		(pc,address,value) = trace_line.split()
@@ -421,15 +433,14 @@ class MCH:
 			self.allocate(addr)
 		self.mu.mem_write(addr, val)
 
-	def allocate(self, address):
-		region = address >> 12
-		region <<= 12
+	def allocate(self, region):
 		if not region in self.allocated_regions:
 			#print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
 			#self.mu.mem_map( region, PAGE_SIZE )
 			self.allocated_regions.add( region )
-			self.pages[region] = Page(region)
-		return region
+			page = Page(region)
+			self.pages[region] = page
+			return page
 
 	def free(self):
 		for region in self.allocated_regions:
@@ -505,8 +516,8 @@ class Trace:
 		self.io.ram = self.cpu.cache = RAM()
 		self.bpx = {}
 		self.bpm = {}
-		#self.callstack = {}
-		self.modules = {}
+		self.callstack = None
+		self.modules = []
 		self.symbols = {}
 		self.reverse = False
 		self.__line = ''
@@ -551,7 +562,11 @@ class Trace:
 				elif self.__line.startswith('[*]'):
 					if self.__line.find('[*] module') != -1:
 						(_,_,module,start,end) = self.__line.split()
-						self.modules[basename(module)] = [ int(start,16), int(end,16) ]
+						#self.modules[basename(module)] = [ int(start,16), int(end,16) ]
+						module = Module(basename(module))
+						module.start = int(start,16)
+						module.end = int(end,16)
+						self.modules.append(module)
 					elif self.__line.find('[*] function') != -1:
 						(_,_,symbol,start,end) = self.__line.split()
 						self.symbols[symbol] = [ int(start,16), int(end,16) ]
@@ -563,7 +578,12 @@ class Trace:
 					self.cpu.set_state(self.__line)
 					was_instruction_loaded = True
 				elif self.__line.find('[0x') != -1 and ( self.__line.find('->') != -1 or self.__line.find('<-') != -1):
-					self.io.save_state(self.__line)
+					new_page = self.io.save_state(self.__line)
+					if new_page:
+						for module in self.modules:
+							if module.start <= new_page.start < module.end:
+								self.io.pages[new_page.start].module = module
+								break
 				elif self.__line.find('[0x') != -1 and self.__line.find(':') != -1:
 					self.io.save_memory(self.__line)
 				else:
@@ -571,7 +591,6 @@ class Trace:
 					continue
 			except Exception as e:
 				#print str(e)
-				#print self.__line
 				#exit()
 				pass
 			self.__line = ''
@@ -600,6 +619,22 @@ class Trace:
 	#		for writed_cell in self.io.writed_cells:
 	#			if writed_cell in self.bpm.keys():
 	#				self.bpm[writed_cell](self, 'write')
+
+		if self.callstack != None:
+			try:
+				if self.cpu.disas().split()[0] in ('ret', 'call', 'int') or self.cpu.disas().split()[0].startswith('j'):
+					if self.cpu.disas().split()[0] == 'call':
+						try:
+							self.callstack[ self.cpu.thread_id ].insert(0, self.cpu.eip_before)
+						except:
+							self.callstack[ self.cpu.thread_id ] = [ self.cpu.eip_before ]
+					elif self.cpu.disas().split()[0] == 'ret':
+						try:
+							self.callstack[ self.cpu.thread_id ].pop(0)
+						except:
+							pass
+			except Exception as e:
+				pass
 
 
 		if self.cpu.takt and not self.cpu.takt % 10000:
@@ -637,7 +672,7 @@ class Trace:
 			stdout.write("\r" + " "*75)
 			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
 			stdout.flush()
-			
+		
 		if self.cpu.disas().split()[0] in ('ret', 'call', 'int') or self.cpu.disas().split()[0].startswith('j'):
 			if self.cpu.disas().split()[0] == 'call':
 				try:
@@ -671,6 +706,15 @@ class Trace:
 	def __exit__(self, exc_type, exc_val, exc_tb):
 		self.trace.close()
 
+def get_symbol(trace, addr):
+	for symbol in trace.symbols.keys():
+		if trace.symbols[symbol][0] <= addr < trace.symbols[symbol][1]:
+			return symbol
+
+def get_module(trace, addr):
+	for module in trace.modules:
+		if module.start <= addr < module.end:
+			return module
 
 def memmap(trace):
 	bases = trace.io.pages.keys()
