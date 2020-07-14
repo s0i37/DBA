@@ -41,13 +41,30 @@ def emulate(instruction):
 	if inst.isSymbolized():
 		print('[symbolic] %s' % str(inst))
 		if inst.isBranch():
-			#for constraint in ctx.getModel(ctx.getPathPredicate()).values():
-			for constraint in ctx.getModel(astCtxt.lnot(ctx.getPathPredicate())).values():
-				#import ipdb;ipdb.set_trace()
+			ast = None
+			branches = ctx.getPathConstraints()
+			branch_no = 1
+			for constraint in branches: # for each of all passed branch
+				edge = constraint.getTakenAddress() # where will be jump
+				for path in constraint.getBranchConstraints(): # true/false constraints
+					if branch_no < len(branches):
+						if path['dstAddr'] == edge:
+							ast = astCtxt.land([ ast, path['constraint'] ]) if ast else path['constraint']
+					else:
+						if path['dstAddr'] != edge: # if last branch (current)
+							ast = astCtxt.land([ ast, path['constraint'] ]) if ast else path['constraint']
+							dst = path['dstAddr']
+				branch_no += 1
+
+			#ast = ctx.getPathPredicate() if inst.isConditionTaken() else astCtxt.lnot(ctx.getPathPredicate())
+			for sym_var,constraint in ctx.getModel(ast).items():
+				#inst.getAddress()
+				sym_memory = ctx.getSymbolicVariable(sym_var).getOrigin()
 				name = constraint.getVariable().getName()
 				size = int(constraint.getVariable().getBitSize()/8)
 				solve = constraint.getValue().to_bytes(size, byteorder='little')
-				print("[+] {addr}: {solve}".format(addr=hex(inst.getAddress()), solve=str(solve)))
+				print("[+] {addr}: {sym}={solve}".format(addr=hex(dst), sym=hex(sym_memory), solve=str(solve)))
+				#print(ast)
 
 memory = {}
 def save_mem(addr, mem):
@@ -90,6 +107,10 @@ class Step:
 parser = argparse.ArgumentParser( description='data flow analisys tool' )
 parser.add_argument("tracefile", type=str, help="trace.log")
 parser.add_argument("-symbolic_data", type=str, default='', help='symbolic data: "GET / HTTP/1.1" or input.bin')
+parser.add_argument("-from_takt", type=int, default=0, help="perform symbolic execution only after takt")
+parser.add_argument("-to_takt", type=int, default=0, help="perform symbolic execution only before takt")
+parser.add_argument("-from_addr", type=int, default=0, help="perform symbolic execution only from address")
+parser.add_argument("-to_addr", type=int, default=0, help="perform symbolic execution only to address")
 args = parser.parse_args()
 
 if path.isfile(args.symbolic_data):
@@ -108,7 +129,6 @@ with open(args.tracefile, 'r') as f:
 			continue
 
 		line = line.split('\n')[0]
-		#print(line)
 		if line.find('{') != -1:
 			addr,opcode,regs = line.split(' ')
 			opcode = codecs.decode(opcode[1:-1],'hex')
@@ -158,8 +178,11 @@ with open(args.tracefile, 'r') as f:
 				save_mem(mem,val)
 				ptr = find_mem(mem, args.symbolic_data, len(val))
 				if ptr and not ptr in symbolic_memory:
+					if args.from_addr and args.from_addr > instruction.addr or args.to_addr and instruction.addr > args.to_addr:
+						continue
+					if args.from_takt and args.from_takt > instruction.takt or args.to_takt and instruction.takt > args.to_takt:
+						continue
 					print("[*] symbolize memory 0x%08x" % ptr)
-					#import ipdb;ipdb.set_trace()
 					ctx.setConcreteMemoryAreaValue(ptr, bytes(args.symbolic_data, 'utf8'))
 					ctx.symbolizeMemory(MemoryAccess(ptr, align(len(args.symbolic_data))))
 					has_symbolic_data = True
