@@ -1,0 +1,301 @@
+function get_states(elem)
+{
+	var states = $(elem).attr('states'),
+		
+		to_hexline = function(hex) { return hex.slice(0,-1).toLowerCase() + '0' }
+	if(states)
+	{
+		out += '<tr><td>takt</td><td>threadId</td><td>EAX</td><td>ECX</td><td>EDX</td><td>EBX</td><td>ESP</td><td>EBP</td><td>ESI</td><td>EDI</td></tr>'
+		states.split(';').forEach( function(s) {
+			var number = s.split(':')[0],
+				threadid = s.split(':')[1],
+				regs = s.split(':')[2].split(',')
+			out += '<tr><td>' + number + '</td><td>' + threadid + '</td><td><a href="#' + to_hexline( regs[0] ) + '">' + regs[0] + '</a></td><td><a href="#data' + to_hexline( regs[1] ) + '">' + regs[1] + '</a></td><td><a href="#data' + to_hexline( regs[2] ) + '">' + regs[2] + '</a></td><td><a href="#data' + to_hexline( regs[3] ) + '">' + regs[3] + '</a></td><td><a href="#data' + to_hexline( regs[4] ) + '">' + regs[4] + '</a></td><td><a href="#data' + to_hexline( regs[5] ) + '">' + regs[5] + '</a></td><td><a href="#data' + to_hexline( regs[6] ) + '">' + regs[6] + '</a></td><td><a href="#data' + to_hexline( regs[7] ) + '">' + regs[7] + '</a></td></tr>'
+		} )
+	}
+	
+	return out
+}
+
+function goto_code(addr)
+{
+	return true
+}
+function goto_data(addr)
+{
+	location = '#' + (addr+'').slice(0,-1).toLowerCase() + '0'
+	// highlight(addr)
+	return true
+}
+function goto_stack(addr)
+{
+	return true
+}
+
+function takt_handler(event) {
+	var elem = event.target,
+		to_hexline = function(hex) { return (hex+'').slice(0,-1).toLowerCase() + '0' }
+	if(elem.className == 'takt')
+	{
+//		Execution.instruction($(elem).attr('takt'))
+		$('#dialog2').dialog( {
+		  	modal: false,
+		  	title: 'state',
+		  	open: function() {
+		  		var out = '<table class="state"><tbody>'
+		  		$.ajax( { url: "http://127.0.0.1:5000/takt/" + $(elem).attr('takt'),
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+						var eax = v[0], ecx = v[1], edx = v[2], ebx = v[3], esp = v[4], ebp = v[5], esi = v[6], edi = v[7], eip = v[8]
+						out += '<tr><td><a href="#' + to_hexline(eax) + '">EAX:' + eax + '</a></td><td><a href="#' + to_hexline(ecx) + '">ECX:' + ecx + '</a></td><td><a href="#' + to_hexline(edx) + '">EDX:' + edx + '</a></td><td><a href="#' + to_hexline(ebx) + '">EBX:' + ebx + '</a></td><td><a href="#' + to_hexline(esp) + '">ESP:' + esp + '</a></td><td><a href="#' + to_hexline(ebp) + '">EBP:' + ebp + '</a></td><td><a href="#' + to_hexline(esi) + '">ESI:' + esi + '</a></td><td><a href="#' + to_hexline(edi) + '">EDI:' + edi + '</a></td></tr>'
+					} )
+					out += '</tbody></table>'
+					$('#dialog2').dialog( "option", "width", 1000 );
+		  			$('#dialog2').dialog( "option", "height", 200 );
+		  			$('#dialog2').html( out )
+				} )
+		  	},
+		  	close: function()
+		  	{
+		  		$('#dialog2').text('loading...')
+		  	}
+		  } )
+	}
+}
+
+$(document).ready( function() {
+	$('#data').click( function(event) {
+	  $('#dialog').dialog( {
+		  	modal: false,
+		  	maxHeight: 500,
+		  	title: 'changes',
+		  	open: function()
+		  	{
+		  		if(event.target.className != 'byte')
+		  		{
+		  			$('#dialog').dialog('close')
+		  			return
+		  		}
+		  		
+		  		var out = ''
+		  		$.ajax( { url: "http://127.0.0.1:5000/data/" + $(event.target).attr('addr'),
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+						var takt = v[0], eip = v[1], val = v[2], access_type = v[3]
+						if(access_type == 'w')
+							out += '<div><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + eip + '">0x' + eip.toString(16) + '</a> <- ' + val.toString(16).toUpperCase() + '</div>'
+						else if(access_type == 'r')
+							out += '<div><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + eip + '">0x' + eip.toString(16) + '</a> -> ' + val.toString(16).toUpperCase() + '</div>'
+					} )
+					$('#dialog').dialog( "option", "width", 400 );
+		  			$('#dialog').html( out )
+				} )
+		  	},
+		  	close: function()
+		  	{
+		  		$('#dialog').text('loading...')
+		  	}
+	  	} )
+
+	  $('#dialog').click(takt_handler)
+	} )
+
+	$('#code').click( function(event) {
+		$('#dialog').dialog( {
+		  	modal: false,
+		  	maxHeight: 500,
+		  	open: function()
+		  	{
+		  		var elem = event.target
+		  		while(1)
+		  		{
+		  			if(elem.className == 'instr')
+		  				break
+		  			else if(elem.tagName == 'HTML')
+		  			{
+		  				$('#dialog').dialog('close')
+		  				return
+		  			}
+		  			else
+		  				elem = elem.parentNode
+		  		}
+
+				var out = ''		  		
+		  		$.ajax( { url: "http://127.0.0.1:5000/code/" + $(elem).attr('eip'),
+					dataType: 'json' } )
+				.done( function(results) {
+					results.forEach( function(v) {
+						console.log(v)
+						var takt = v[0], addr = v[1], val = v[2], access_type = v[3]
+						if(access_type == 'w')
+							out += '<div><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + ((addr>>4)<<4) + '">0x' + addr.toString(16) + '</a> <- ' + val.toString(16).toUpperCase() + '</div>'
+						else if(access_type == 'r')
+							out += '<div><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + ((addr>>4)<<4) + '">0x' + addr.toString(16) + '</a> -> ' + val.toString(16).toUpperCase() + '</div>'
+					} )
+					$('#dialog').dialog( "option", "width", 400 );
+		  			$('#dialog').dialog( "option", "title", 'memory operations' );
+		  			$('#dialog').html( out )
+				} )
+
+		  		/*
+		  		if(elem.className == 'states')
+		  		{
+		  			$('#dialog').dialog( "option", "width", 800 );
+		  			$('#dialog').dialog( "option", "title", 'states' );
+		  			$('#dialog').html( get_states(elem) )
+		  		}
+		  		*/
+		  		
+		  	},
+		  	close: function()
+		  	{
+		  		$('#dialog').text('loading...')
+		  	}
+		} )
+
+		$('#dialog').click(takt_handler)
+	} )
+
+/*
+	$('#code code').each(function(i, block) {
+    	hljs.highlightBlock(block);
+  	})
+*/
+
+} )
+
+function get_memory_page_name(addr)
+{
+	for(var page in MemoryMap)
+		if(MemoryMap[page].start <= addr < MemoryMap[page].end)
+			return page
+}
+
+var Registers = {
+	set: function(regs)
+	{
+		for(var name in regs)
+		{
+			if( document.getELementById(name).innerHTML == regs[name])
+				document.getELementById(name).innerHTML = '<a href=#' + regs[name] + '>' + regs[name] + '</a>'
+			else
+				document.getELementById(name).innerHTML = '<a class="reg_changed" href=#' + regs[name] + '>' + regs[name] + '</a>'
+		}
+	},
+}
+var Memory = {
+	access: function(addr)
+	{
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt,
+			dataType: 'json' } )
+		.done( function(results) {
+			results.forEach( function(v) {} )
+		} )
+	},
+	read: function(addr)
+	{
+		var cell = document.getELementById("cell_"+addr)
+		cell.setAttribute("style", "cell_readed") //#green
+	},
+	write: function(addr,val)
+	{
+		var cell = document.getELementById("cell_"+addr)
+		cell.setAttribute("style", "cell_readed") //#green
+		cell.innerHTML = val
+	},
+	load: function(takt)
+	{
+		document.getElementsByClassName("cell").forEach(function(elem) {
+			$.ajax( { url: "http://127.0.0.1:5000/data/" + elem.getAttribute("addr"),
+				dataType: 'json' } )
+			.done( function(results) {
+				results.forEach( function(v) {} )
+			} )
+		})
+	},
+	//bpx: [],
+	//bmp: [],
+}
+var Execution = {
+	takt: 0,
+	instruction: function(takt)
+	{
+		var eip
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + takt,
+			dataType: 'json',
+			async: false } )
+		.done( function(results) {
+			results.forEach( function(v)
+			{
+				Registers.set({
+					"eax": v[0],
+					"ecx": v[1],
+					"edx": v[2],
+					"ebx": v[3],
+					"esp": v[4],
+					"ebp": v[5],
+					"esi": v[6],
+					"edi": v[7],
+				})
+				eip = v[8]
+			} )
+		} )
+
+		$.ajax( { url: "http://127.0.0.1:5000/code/" + takt,
+			dataType: 'json' } )
+		.done( function(results) {
+			results.forEach( function(v)
+			{
+				goto_data(addr)
+				Memory.read(addr)
+				Memory.write(addr,val)
+			} )
+		} )
+		return eip
+	},
+	find_state: function(where,access)
+	{
+
+	},
+	step: function()
+	{
+		goto_code( this.instruction(this.takt++) )
+	},
+	step_back: function()
+	{
+		goto_code( this.instruction(this.takt--) )
+	},
+	//cont: function() { find_state({after:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm});Memory.load(takt) },
+	//cont_back: function() { find_state({before:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm});Memory.load(takt) },
+	states: function(addr) { return states },
+}
+
+function hotkeys(event)
+{
+	var
+	F4 = 115,
+	F6 = 117,
+	F7 = 118,
+	F8 = 119,
+	F9 = 120,
+	F10 = 121
+	switch(event.keyCode)
+	{
+		case F4:
+			Execution.cont_back()
+			break
+		case F6:
+			Execution.step_back()
+			break
+		case F7:
+			Execution.step()
+			break
+		case F9:
+			Execution.cont()
+			break
+	}
+}

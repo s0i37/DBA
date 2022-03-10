@@ -19,7 +19,7 @@ parser.add_argument("-from_takt", type=int, default=0, help="trace memory only a
 parser.add_argument("-to_takt", type=int, default=0, help="trace memory only before takt")
 args = parser.parse_args()
 
-c = sqlite3.connect("memory.db")
+c = sqlite3.connect("memory.db", check_same_thread=False)
 cc = c.cursor()
 
 def db_init():
@@ -105,7 +105,7 @@ def load_trace(tracefile):
 				if used_memory:
 					mems_r, mems_w = used_memory
 					for mem_r in mems_r:
-						value = trace.io.ram.get_dword(mem_r)
+						value = trace.io.ram.get_byte(mem_r)
 						if not mem_r in Memory.reads:
 							Memory.reads[mem_r] = []
 						Memory.reads[mem_r].append( (trace.cpu.eip_before,value) )
@@ -115,7 +115,7 @@ def load_trace(tracefile):
 							value
 						) )
 					for mem_w in mems_w:
-						value = trace.io.ram.get_dword(mem_w)
+						value = trace.io.ram.get_byte(mem_w)
 						if not mem_w in Memory.writes:
 							Memory.writes[mem_w] = []
 						Memory.writes[mem_w].append( (trace.cpu.eip_before,value) )
@@ -135,8 +135,8 @@ def load_trace(tracefile):
 				#	after_heap_allocate == None
 
 		except StopExecution:
-			for module,region in trace.modules.items():
-				Memory.modules[module] = (region[0],region[1])
+			for module in trace.modules:
+				Memory.modules[module.name] = (module.start, module.end)
 			c.commit()
 
 		except Exception as e:
@@ -166,23 +166,92 @@ def create_html(outfile='out.html'):
 	val = ""
 	operation_count_reads = 0
 	out.write('''
-		<link rel="stylesheet" href="memtrace/static/jquery-ui/themes/smoothness/jquery-ui.min.css">
-		<link rel="stylesheet" href="memtrace/static/highlightjs/styles/default.css">
-		<script src="memtrace/static/jquery/dist/jquery.js"></script>
-		<script src="memtrace/static/jquery-ui/jquery-ui.js"></script>
-		<script src="memtrace/static/highlightjs/highlight.pack.js"></script>
-		<script src="memtrace/static/script.js?v=0.11"></script>
+		<link rel="stylesheet" href="memtrace/jquery-ui/themes/smoothness/jquery-ui.min.css">
+		<link rel="stylesheet" href="memtrace/highlightjs/styles/default.css">
+		<script src="memtrace/jquery/dist/jquery.js"></script>
+		<script src="memtrace/jquery-ui/jquery-ui.js"></script>
+		<script src="memtrace/highlightjs/highlight.pack.js"></script>
+		<script src="memtrace/sprintf/sprintf.js"></script>
+		<script src="memtrace/script.js?v=0.20"></script>
 		<style>
 		body { background-color: white; color: black; }
-		#data { float: left; width: 60%; height: 100%; overflow-y: scroll; }
-		#code { float: left; width: 40%; height: 100%; overflow-y: scroll; }
-		#data table, #code table {width: 100%; }
+		#trace_position { float: left; width: 95%; }
+		#code { float: left; width: 60%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#regs { float: left; width: 39%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#hints { float: left; width: 60%; height: 5%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#calls { float: left; width: 39%; height: 5%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#data { float: left; width: 60%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#stack { float: left; width: 39%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#data table, #code table { width: 100%; }
 		.heap0 { border: 2px solid blue; }
 		.heap1 { border: 2px solid black; }
 		.state, .instructionr, .instructionw, .memoryr, .memoryw { font-size: 9pt; }
+		.cell, .instr, .takt { cursor: pointer; }
+		.byte_wrote { color: #ffffff; font-weight: bold; font-size: large; }
+		.byte_wrote_ago_1 { color: #cccccc; font-weight: bold; }
+		.byte_wrote_ago_2 { color: #777777; font-weight: bold; }
+		.byte_wrote_ago_3 { color: #333333; }
+		.byte_read { color: #00ff00; font-weight: bold; font-size: large; }
+		.byte_read_ago_1 { color: #00cc00; font-weight: bold; }
+		.byte_read_ago_2 { color: #007700; font-weight: bold; }
+		.byte_read_ago_3 { color: #003300; }
+		.byte_updated { font-weight: bold; }
+		.reg_changed { background-color: #00ffff; }
+		.reg_changed_ago_1 { background-color: #aaffff; }
+		.reg_changed_ago_2 { background-color: #eeffff; }
+		#regs .reg_points_r { color: green; }
+		#regs .reg_points_w { color: red; }
+		#regs .reg_points_x { color: #aaaa00; }
+		.access_read { background-color: green; }
+		.access_write { background-color: red; }
+		.instruction_current { color: #00ffff; }
+		.instruction_exec_ago_1 { color: #00cccc; }
+		.instruction_exec_ago_2 { color: #007777; }
+		.instruction_exec_ago_3 { color: #003333; }
 		</style>
 		<div id="dialog"></div>
+		<div id="dialog2"></div>
 	''')
+
+	out.write('<div><input type="range" id="trace_position" min="253000000" max="253005638" step=1 value=253000000><div id="trace_position_value">0</div></div>')
+	out.write("<div id='code'><table><tbody>")
+	for page in Memory.pages.code:
+		#eip = page
+		for eip in [eip for eip in Memory.code if page <= eip < page + WHITESPACE_PADDING_SIZE]:
+		#while True:
+			if eip in Memory.code.keys():
+				stdout.write("\r[*] code 0x%08x" % eip)
+				stdout.flush()
+				executions = len( Memory.code[eip] )
+				opcode = Memory.code[eip][0]['opcode']
+				disas = Memory.code[eip][0]['disas']
+				css_color_gradient = executions * 10 if executions * 10 < 255 else 255
+				css_color_executions = "#ffff%02x" % (0xff-css_color_gradient,)
+				out.write('<tr id="instr_%(eip)d" style="background-color:%(color)s"><td><a href="#">%(exec_count)d</a></td><td><a href="#" class="instr" eip=%(eip)d>0x%(eip)08x</a></td><td>%(opcode)s</td><td><code>%(instr)s</code></td></tr>' % { 'color': css_color_executions, 'exec_count': executions, 'eip': eip, 'opcode': opcode.encode('hex'), 'instr': disas })
+				eip += len(opcode) #!!! DBT trace has wrong opcode
+			else:
+				out.write('<tr><td></td><td>0x%(eip)08x</td><td>**</td><td>**</td></tr>' % { 'eip': eip })
+				eip += 1
+			#if eip >= page + WHITESPACE_PADDING_SIZE:
+			#	break
+	out.write("</tbody></table></div>")
+
+	out.write('<div id="regs">')
+	#out.write('<tr><td id="EAX">EAX: </td><td class="value">00000000</td> <td class="hints"></td></tr>')
+	out.write('<div id="EAX">EAX: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="ECX">ECX: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="EDX">EDX: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="EBX">EBX: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="ESP">ESP: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="EBP">EBP: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="ESI">ESI: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="EDI">EDI: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('<div id="EIP">EIP: <span class="value">00000000</span> <span class="hints"></span></div>')
+	out.write('</div>')
+
+	out.write('<div id="hints">EAX=00000000<br>[0x02d7cf70] -> 0xde2d3c4d</div>')
+	out.write('<div id="calls"></div>')
+
 	out.write("<div id='data'><table><tbody>")
 	for page in Memory.pages.data:
 		page_type = get_page_type(page)
@@ -217,17 +286,17 @@ def create_html(outfile='out.html'):
 					css_color_write = "#ff%02x%02x" % (0xff-css_color_graient, 0xff-css_color_graient)
 					heap_number = in_heap(addr)
 					if heap_number:
-						out.write("<td class='heap%(heap_no)d' style='background-color:%(color)s'><div addr=%(addr)d class='byte'>%(value)s</div></td>" % { 'heap_no': heap_number%2, 'color':css_color_write, 'addr': addr, 'value': val[-2:] })
+						out.write("<td class='heap%(heap_no)d' style='background-color:%(color)s'><div id='cell_%(addr)d' addr=%(addr)d class='cell'>%(value)s</div></td>" % { 'heap_no': heap_number%2, 'color':css_color_write, 'addr': addr, 'value': val[-2:] })
 					else:
-						out.write("<td style='background-color:%(color)s'><div addr=%(addr)d class='byte'>%(value)s</div></td>" % { 'color': css_color_write, 'addr': addr, 'value': val[-2:] })
+						out.write("<td style='background-color:%(color)s'><div id='cell_%(addr)d' addr=%(addr)d class='cell'>%(value)s</div></td>" % { 'color': css_color_write, 'addr': addr, 'value': val[-2:] })
 				elif operation_type == 'r':
 					css_color_graient = operation_count_reads * 16 if operation_count_reads < 16 else 255
 					css_color_read = "#%02xff%02x" % (0xff-css_color_graient, 0xff-css_color_graient)
 					heap_number = in_heap(addr)
 					if heap_number:
-						out.write("<td class='heap%(heap_no)d' style='background-color:%(color)s'><div addr=%(addr)d class='byte'>%(value)s</div></td>" % { 'heap_no': heap_number%2, 'color':css_color_read, 'addr': addr, 'value': val[-2:] })
+						out.write("<td class='heap%(heap_no)d' style='background-color:%(color)s'><div id='cell_%(addr)d' addr=%(addr)d class='cell'>%(value)s</div></td>" % { 'heap_no': heap_number%2, 'color':css_color_read, 'addr': addr, 'value': val[-2:] })
 					else:
-						out.write("<td style='background-color:%(color)s'><div addr=%(addr)d class='byte'>%(value)s</div></td>" % { 'color': css_color_read, 'addr': addr, 'value': val[-2:] })
+						out.write("<td style='background-color:%(color)s'><div id='cell_%(addr)d' addr=%(addr)d class='cell'>%(value)s</div></td>" % { 'color': css_color_read, 'addr': addr, 'value': val[-2:] })
 				val = val[:-2]
 			else:
 				heap_number = in_heap(addr)
@@ -245,28 +314,22 @@ def create_html(outfile='out.html'):
 		out.write("</tr>")
 	out.write("</tbody></table></div>")
 
-	out.write("<div id='code'><table><tbody>")
-	for page in Memory.pages.code:
-		eip = page
-		while True:
-			if eip in Memory.code.keys():
-				stdout.write("\r[*] code 0x%08x" % eip)
-				stdout.flush()
-				executions = len( Memory.code[eip] )
-				opcode = Memory.code[eip][0]['opcode']
-				disas = Memory.code[eip][0]['disas']
-				css_color_gradient = executions * 10 if executions * 10 < 255 else 255
-				css_color_executions = "#ff%02x%02x" % (0xff-css_color_gradient, 0xff-css_color_gradient)
-				out.write('<tr style="background-color:%(color)s"><td><a href="#">%(exec_count)d</a></td><td><a href="#" class="instr" eip=%(eip)d>0x%(eip)08x</a></td><td>%(opcode)s</td><td><code>%(instr)s</code></td></tr>' % { 'color': css_color_executions, 'exec_count': executions, 'eip':eip, 'opcode': opcode.encode('hex'), 'instr': disas })
-				eip += len(opcode)
-			else:
-				out.write('<tr><td></td><td>0x%(eip)08x</td><td>**</td><td>**</td></tr>' % { 'eip': eip })
-				eip += 1
-			if eip >= page + WHITESPACE_PADDING_SIZE:
-				break
-	out.write("</tbody></table></div>")
+	out.write("<div id='stack'>")
+	#out.write('<tr><td>00000008:</td> <td>FFFFFFFF</td> <td class="hints"></td></tr>')
+	out.write("<div>00000000: 001b0304 stack.0x001f0000 : [000410010 00000000]</div>")
+	out.write("<div>00000004: 00402000 data.0x00402000 : [41 41 41 41 41 41 41 41]</div>")
+	out.write("<div>00000008: FFFFFFFF</div>")
+	out.write("<div>0000000c: 00000000</div>")
+	out.write("<div>00000010: 00000000</div>")
+	out.write("<div>00000014: 00000000</div>")
+	out.write("<div>00000018: 00000000</div>")
+	out.write("</div>")
+
+	out.write("<script>var MemoryMap = {}</script>")
 	out.close()
 
+	print("uniq instructions: ")
+	print("uniq memory: ")
 
 if __name__ == '__main__':
 	db_init()
@@ -274,7 +337,7 @@ if __name__ == '__main__':
 	create_html()
 	www = Flask(__name__)
 
-	@www.route('/data/<int:addr>')
+	@www.route('/data/<int:addr>/accesses')
 	def data_goto(addr):
 		results = []
 		print addr
@@ -283,7 +346,7 @@ if __name__ == '__main__':
 			results.append( (takt,eip,value,access_type) )
 		return json.dumps(results)
 
-	@www.route('/code/<int:addr>')
+	@www.route('/code/<int:addr>/accesses')
 	def code_goto(addr):
 		results = []
 		print addr
@@ -292,5 +355,57 @@ if __name__ == '__main__':
 			results.append( (takt,addr,value,access_type) )
 		return json.dumps(results)
 
-	cors = CORS(www)
+	@www.route('/takt/<int:takt>/state')
+	def takt_state(takt):
+		results = []
+		print takt
+		for (eax,ecx,edx,ebx,esp,ebp,esi,edi,eip) in cc.execute("SELECT cpu.eax,cpu.ecx,cpu.edx,cpu.ebx,cpu.esp,cpu.ebp,cpu.esi,cpu.edi,cpu.eip FROM cpu WHERE cpu.takt=?", (takt,)):
+			print "state: EAX:%08x ECX:%08x EDX:%08x EBX:%08x ESP:%08x EBP:%08x ESI:%08x EDI:%08x EIP:%08x" % (eax,ecx,edx,ebx,esp,ebp,esi,edi,eip)
+			results.append((eax,ecx,edx,ebx,esp,ebp,esi,edi,eip))
+		return json.dumps(results)
+
+	@www.route('/takt/<int:takt>/access')
+	def takt_access(takt):
+		results = []
+		print takt
+		for (takt,addr,value,access_type) in cc.execute("SELECT mem.* FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE cpu.takt=?", (takt,)):
+			print "takt: %d, addr: 0x%x, value: %X, access_type: %s" % (takt,addr,value,access_type)
+			results.append( (takt,addr,value,access_type) )
+		return json.dumps(results)
+
+	@www.route('/data/<int:addr>/takt/<int:takt>/state')
+	def get_memory(addr, takt):
+		results = []
+		print addr, takt
+		for (byte,) in cc.execute("SELECT mem.value FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE mem.addr=? and (cpu.takt<=? or cpu.takt>? and mem.access_type='r') limit 1", (addr,takt,takt)):
+			print "byte: %d" % (byte,)
+			results.append( (byte,) )
+		return json.dumps(results)
+
+	@www.route('/access/before/<int:takt>/takt')
+	def find_takt_before(takt):
+		results = []
+		print takt
+		for (takt,) in cc.execute("SELECT cpu.takt FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE ...", ()):
+			print "byte: %d" % (byte,)
+			results.append( (takt,) )
+		return json.dumps(results)
+
+	@www.route('/access/after/<int:takt>/takt')
+	def find_takt_after(takt):
+		pass
+
+	CORS(www)
 	www.run(debug=True, use_reloader=False)
+
+'''
+/data/<int:addr>/accesses -> [(takt,eip,value,access_type), ...]
+/code/<int:addr>/accesses -> [(takt,addr,value,access_type), ...]
+
+/takt/<int:takt>/state -> eax,ecx,edx,ebx,esp,ebp,esi,edi,eip
+/takt/<int:takt>/access -> takt,addr,value,access_type
+
+/data/<int:addr>/takt/<int:takt>/state -> byte
+/access/before/<int:takt>/takt?bpx=[]&bpm=[] -> takt
+/access/after/<int:takt>/takt?bpx=[]&bpm=[] -> takt
+'''
