@@ -8,11 +8,11 @@ import struct
 import string
 import colorama
 
-__version__ = '0.17'
+__version__ = '0.18'
 
 PAGE_SIZE = 0x1000
-#BITS = 32
-BITS = 64
+BITS = 32
+#BITS = 64
 
 mu = Uc( UC_ARCH_X86, {32: UC_MODE_32, 64: UC_MODE_64}[BITS] )
 md = Cs( CS_ARCH_X86, {32: CS_MODE_32, 64: CS_MODE_64}[BITS] )
@@ -186,7 +186,10 @@ class CPU:
 	def disas(self):
 		if not self.inst:
 			self.analyze()
-		return "%s %s" % (self.inst.mnemonic, self.inst.op_str)
+		try:
+			return "%s %s" % (self.inst.mnemonic.encode(), self.inst.op_str.encode())
+		except:
+			return "?"
 
 	def analyze(self):
 		for inst in self.md.disasm(self.opcode, 0):
@@ -197,11 +200,14 @@ class CPU:
 	def get_used_regs(self):
 		readed_registers = set()
 		writed_registers = set()
-		(regs_read, regs_write) = self.inst.regs_access()
-		for reg_read_id in regs_read:
-			readed_registers.add( self.inst.reg_name(reg_read_id) )
-		for reg_write_id in regs_write:
-			writed_registers.add( self.inst.reg_name(reg_write_id) )
+		try:
+			(regs_read, regs_write) = self.inst.regs_access()
+			for reg_read_id in regs_read:
+				readed_registers.add( self.inst.reg_name(reg_read_id) )
+			for reg_write_id in regs_write:
+				writed_registers.add( self.inst.reg_name(reg_write_id) )
+		except:
+			pass
 		return (readed_registers, writed_registers)
 
 	def get_used_regs__(self):
@@ -304,7 +310,7 @@ class CPU:
 			self.exception = False
 		except Exception as e:
 			self.mu.emu_stop()
-			self.exception = True
+			self.exception = str(e)
 			#print colorama.Fore.LIGHTBLACK_EX + "\n[!] %s: %s" % ( self.disas(), str(e) ) + colorama.Fore.RESET,
 
 class Module:
@@ -340,13 +346,15 @@ class MCH:
 		self.writed_cells = set()
 		self.allocated_regions = set()
 		self.pages = {}
-		self.cache = None
+		self.cache = {}
 		self.ram = None
 
 	def save_state(self, trace_line):
 		(pc,address,direction,value) = trace_line.split()
 		pc = int(pc.split(':')[1], 16)
 		address = int( address[1:-1], 16 )
+		if value == "!":
+			return
 		size = len(value[2:])/2
 		page = None
 
@@ -401,7 +409,7 @@ class MCH:
 		#print "[debug] access memory 0x%08x:%d" % (address, size)
 		if access in (UC_MEM_WRITE,):
 			for cell in xrange(address, address+size):
-				self.writepagesd_cells.add(cell)
+				self.writed_cells.add(cell)
 			if size == 1:
 				value = struct.pack( "B", value)
 			elif size == 2:
@@ -428,15 +436,15 @@ class MCH:
 		low_region = addr >> 12
 		low_region <<= 12
 		if not high_region in self.allocated_regions:
-			self.allocate(addr + len(val))
+			self.allocate(high_region)
 		if not low_region in self.allocated_regions:
-			self.allocate(addr)
+			self.allocate(low_region)
 		self.mu.mem_write(addr, val)
 
 	def allocate(self, region):
 		if not region in self.allocated_regions:
-			#print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
-			#self.mu.mem_map( region, PAGE_SIZE )
+			print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
+			self.mu.mem_map( region, PAGE_SIZE )
 			self.allocated_regions.add( region )
 			page = Page(region)
 			self.pages[region] = page
@@ -516,7 +524,7 @@ class Trace:
 		self.io.ram = self.cpu.cache = RAM()
 		self.bpx = {}
 		self.bpm = {}
-		self.callstack = None
+		self.callstack = {}
 		self.modules = []
 		self.symbols = {}
 		self.reverse = False
@@ -684,7 +692,7 @@ class Trace:
 					self.callstack[ self.cpu.thread_id ].pop(0)
 				except:
 					pass
-			return # problem with emulation call/jmp/ret/int instructions
+			#return # problem with emulation call/jmp/ret/int instructions
 
 		if self.cpu.disas().split()[0] == 'sysenter':
 			print colorama.Fore.CYAN + "\n[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET,
