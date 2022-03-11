@@ -101,6 +101,14 @@ def load_trace(tracefile):
 				page >>= 12
 				page <<= 12
 				Memory.stack.add(page)
+				if not "stack.0x%08x"%page in Memory.modules:
+					Memory.modules["stack.0x%08x"%page] = [page, page|0xfff]
+
+				page = trace.cpu.eip_before
+				page >>= 12
+				page <<= 12
+				if not "code.0x%08x"%page in Memory.modules:
+					Memory.modules["code.0x%08x"%page] = [page, page|0xfff]
 
 				if used_memory:
 					mems_r, mems_w = used_memory
@@ -137,6 +145,10 @@ def load_trace(tracefile):
 		except StopExecution:
 			for module in trace.modules:
 				Memory.modules[module.name] = (module.start, module.end)
+			#cc.execute("CREATE INDEX takt_cpu_index ON cpu(takt)")
+			#cc.execute("CREATE INDEX eip_cpu_index ON cpu(eip)")
+			#cc.execute("CREATE INDEX takt_mem_index ON mem(takt)")
+			#cc.execute("CREATE INDEX addr_mem_index ON mem(addr)")
 			c.commit()
 
 		except Exception as e:
@@ -160,7 +172,6 @@ def load_trace(tracefile):
 			Memory.pages.code.append(eip * WHITESPACE_PADDING_SIZE)
 	Memory.pages.code.pop(0)
 
-
 def create_html(outfile='out.html'):
 	out = open(outfile, 'w')
 	val = ""
@@ -176,6 +187,7 @@ def create_html(outfile='out.html'):
 		<style>
 		body { background-color: white; color: black; }
 		#trace_position { float: left; width: 95%; }
+		#trace_position_value { float: left; width: 4%; }
 		#code { float: left; width: 60%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
 		#regs { float: left; width: 39%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
 		#hints { float: left; width: 60%; height: 5%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
@@ -186,7 +198,7 @@ def create_html(outfile='out.html'):
 		.heap0 { border: 2px solid blue; }
 		.heap1 { border: 2px solid black; }
 		.state, .instructionr, .instructionw, .memoryr, .memoryw { font-size: 9pt; }
-		.cell, .instr, .takt { cursor: pointer; }
+		.cell, .instr, .takt, .addr { cursor: pointer; }
 		.byte_wrote { color: #ffffff; font-weight: bold; font-size: large; }
 		.byte_wrote_ago_1 { color: #cccccc; font-weight: bold; }
 		.byte_wrote_ago_2 { color: #777777; font-weight: bold; }
@@ -196,6 +208,9 @@ def create_html(outfile='out.html'):
 		.byte_read_ago_2 { color: #007700; font-weight: bold; }
 		.byte_read_ago_3 { color: #003300; }
 		.byte_updated { font-weight: bold; }
+		.byte_changed { color: #007777; }
+		.stack_read { color: #00ff00; }
+		.stack_wrote { color: #ff0000; }
 		.reg_changed { background-color: #00ffff; }
 		.reg_changed_ago_1 { background-color: #aaffff; }
 		.reg_changed_ago_2 { background-color: #eeffff; }
@@ -204,16 +219,17 @@ def create_html(outfile='out.html'):
 		#regs .reg_points_x { color: #aaaa00; }
 		.access_read { background-color: green; }
 		.access_write { background-color: red; }
-		.instruction_current { color: #00ffff; }
-		.instruction_exec_ago_1 { color: #00cccc; }
-		.instruction_exec_ago_2 { color: #007777; }
-		.instruction_exec_ago_3 { color: #003333; }
+		.instruction_current { background-color: #003333; }
+		.instruction_exec_ago_1 { background-color: #007777; }
+		.instruction_exec_ago_2 { background-color: #00cccc; }
+		.instruction_exec_ago_3 { background-color: #00ffff; }
+		.ui-dialog-titlebar { padding: 2px !important; }
 		</style>
 		<div id="dialog"></div>
 		<div id="dialog2"></div>
 	''')
 
-	out.write('<div><input type="range" id="trace_position" min="253000000" max="253005638" step=1 value=253000000><div id="trace_position_value">0</div></div>')
+	out.write('<div><input type="range" id="trace_position" min="253000000" max="253005638" step=1 value=253000000><input type="text" id="trace_position_value" value=0></div>')
 	out.write("<div id='code'><table><tbody>")
 	for page in Memory.pages.code:
 		#eip = page
@@ -237,7 +253,6 @@ def create_html(outfile='out.html'):
 	out.write("</tbody></table></div>")
 
 	out.write('<div id="regs">')
-	#out.write('<tr><td id="EAX">EAX: </td><td class="value">00000000</td> <td class="hints"></td></tr>')
 	out.write('<div id="EAX">EAX: <span class="value">00000000</span> <span class="hints"></span></div>')
 	out.write('<div id="ECX">ECX: <span class="value">00000000</span> <span class="hints"></span></div>')
 	out.write('<div id="EDX">EDX: <span class="value">00000000</span> <span class="hints"></span></div>')
@@ -249,7 +264,7 @@ def create_html(outfile='out.html'):
 	out.write('<div id="EIP">EIP: <span class="value">00000000</span> <span class="hints"></span></div>')
 	out.write('</div>')
 
-	out.write('<div id="hints">EAX=00000000<br>[0x02d7cf70] -> 0xde2d3c4d</div>')
+	out.write('<div id="hints"></div>')
 	out.write('<div id="calls"></div>')
 
 	out.write("<div id='data'><table><tbody>")
@@ -314,18 +329,9 @@ def create_html(outfile='out.html'):
 		out.write("</tr>")
 	out.write("</tbody></table></div>")
 
-	out.write("<div id='stack'>")
-	#out.write('<tr><td>00000008:</td> <td>FFFFFFFF</td> <td class="hints"></td></tr>')
-	out.write("<div>00000000: 001b0304 stack.0x001f0000 : [000410010 00000000]</div>")
-	out.write("<div>00000004: 00402000 data.0x00402000 : [41 41 41 41 41 41 41 41]</div>")
-	out.write("<div>00000008: FFFFFFFF</div>")
-	out.write("<div>0000000c: 00000000</div>")
-	out.write("<div>00000010: 00000000</div>")
-	out.write("<div>00000014: 00000000</div>")
-	out.write("<div>00000018: 00000000</div>")
-	out.write("</div>")
+	out.write("<div id='stack'></div>")
 
-	out.write("<script>var MemoryMap = {}</script>")
+	out.write("<script>var MemoryMap = {}</script>".format(json.dumps(Memory.modules)))
 	out.close()
 
 	print("uniq instructions: ")

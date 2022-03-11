@@ -1,26 +1,35 @@
 function goto_code(addr)
 {
-	document.getElementById('code').scrollTop = document.getElementById('instr_'+addr).offsetTop - 100
+	var target = document.getElementById('instr_'+addr)
+	document.getElementById('code').scrollTop = target.offsetTop - 100
+	highlight(target)
 	return addr
 }
 function goto_data(addr)
 {
-	document.getElementById('data').scrollTop = document.getElementById('cell_'+addr).parentElement.offsetTop - 100
+	var target = document.getElementById('cell_'+addr)
+	document.getElementById('data').scrollTop = target.parentElement.offsetTop - 100
+	highlight(target)
 	return addr
 }
 function goto_stack(addr)
 {
+	addr = (addr >> 2) << 2
+	var target = document.getElementById('stack_'+addr)
+	document.getElementById('stack').scrollTop = target.offsetTop - 100
+	highlight(target)
 	return addr
-}
-
-function to_hexline(hex)
-{
-	return (hex+'').slice(0,-1).toLowerCase() + '0'
 }
 
 function takt_handler(event) {
 	var elem = event.target, takt
-	if(elem.classList.contains('takt'))
+	if(elem.id == 'trace_position' || elem.id == 'trace_position_value')
+	{
+		takt = elem.value
+		Memory.load(takt)
+		Execution.instruction(takt)
+	}
+	else if(elem.classList.contains('takt'))
 	{
 		takt = $(elem).attr('takt')
 		Memory.load(takt)
@@ -51,12 +60,12 @@ $(document).ready( function() {
 						//console.log(v)
 						var takt = v[0], eip = v[1], val = v[2], access_type = v[3]
 						if(access_type == 'w')
-							out += '<div class="access_write"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + eip + '">0x' + eip.toString(16) + '</a> <- ' + BYTE(val) + '</div>'
+							out += '<div class="access_write"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_code(' + eip + ')">0x' + DWORD(eip) + '</a> <- ' + BYTE(val) + '</div>'
 						else if(access_type == 'r')
-							out += '<div class="access_read"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + eip + '">0x' + eip.toString(16) + '</a> -> ' + BYTE(val) + '</div>'
+							out += '<div class="access_read"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_code(' + eip + ')">0x' + DWORD(eip) + '</a> -> ' + BYTE(val) + '</div>'
 					} )
-					$('#dialog').dialog( "option", "width", 400 );
-		  			$('#dialog').html( out )
+					$('#dialog').dialog("option", "width", 400);
+		  			$('#dialog').html(out)
 				} )
 		  	},
 		  	close: function()
@@ -97,13 +106,13 @@ $(document).ready( function() {
 						//console.log(v)
 						var takt = v[0], addr = v[1], val = v[2], access_type = v[3]
 						if(access_type == 'w')
-							out += '<div class="access_write"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + ((addr>>4)<<4) + '">0x' + addr.toString(16) + '</a> <- ' + BYTE(val) + '</div>'
+							out += '<div class="access_write"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_data(' + addr + ')">0x' + DWORD(addr) + '</a> <- ' + BYTE(val) + '</div>'
 						else if(access_type == 'r')
-							out += '<div class="access_read"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a href="#' + ((addr>>4)<<4) + '">0x' + addr.toString(16) + '</a> -> ' + BYTE(val) + '</div>'
+							out += '<div class="access_read"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_data(' + addr + ')">0x' + DWORD(addr) + '</a> -> ' + BYTE(val) + '</div>'
 					} )
-					$('#dialog').dialog( "option", "width", 400 );
-		  			$('#dialog').dialog( "option", "title", 'memory operations' );
-		  			$('#dialog').html( out )
+					$('#dialog').dialog("option", "width", 400);
+		  			$('#dialog').dialog("option", "title", 'memory operations');
+		  			$('#dialog').html(out)
 				} )		  		
 		  	},
 		  	close: function()
@@ -115,24 +124,25 @@ $(document).ready( function() {
 		$('#dialog').click(takt_handler)
 	} )
 
-/*
+	document.getElementById('trace_position').onchange = takt_handler
+	document.getElementById('trace_position_value').onchange = takt_handler
+
 	$('#code code').each(function(i, block) {
     	hljs.highlightBlock(block);
   	})
-*/
 
 } )
 
-function get_memory_page_name(addr)
-{
-	for(var page in MemoryMap)
-		if(MemoryMap[page].start <= addr < MemoryMap[page].end)
-			return page
-}
-
 function telescope(addr)
 {
+	for(var page in MemoryMap)
+		if(MemoryMap[page][0] <= addr && addr < MemoryMap[page][1])
+			return page
 	return ""
+}
+function is_stack(addr)
+{
+	return telescope(addr).indexOf("stack") == 0
 }
 
 function BYTE(val)
@@ -148,6 +158,150 @@ function DWORD(val)
 	return sprintf("%08X", val)
 }
 
+var Memory = {
+	bytes: {},
+	highlighted: {},
+	BYTE: function(addr) { return this.bytes[addr] },
+	WORD: function(addr) { return this.bytes[addr] + this.bytes[addr+1] },
+	DWORD: function(addr) { return this.bytes[addr] + this.bytes[addr+1] + this.bytes[addr+2] + this.bytes[addr+3] },
+	access: function(addr)
+	{
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/access",
+			dataType: 'json',
+			async: false } )
+		.done( function(results) {
+			results.forEach( function(v) {} )
+		} )
+	},
+	read: function(addr)
+	{
+		var cell = document.getElementById("cell_"+addr)
+		cell.classList.remove("byte_changed")
+		cell.classList.add("byte_read")
+		if(is_stack(addr))
+		{
+			Stack.read(addr)
+			goto_stack(addr)
+		}
+
+		for(var takt in this.highlighted)
+		{
+			if(takt != Execution.takt && !this.highlighted[Execution.takt])
+				for(var _addr in this.highlighted[takt])
+				{
+					var _cell = document.getElementById("cell_"+_addr)
+					_cell.classList.remove( this.highlighted[takt][_addr].pop() )
+					var next = this.highlighted[takt][_addr].pop()
+					if(next)
+					{
+						_cell.classList.add(next)
+						this.highlighted[takt][_addr].push(next)
+					}
+				}
+		}
+		if(! this.highlighted[Execution.takt]) this.highlighted[Execution.takt] = {}
+		this.highlighted[Execution.takt][addr] = ["byte_read_ago_3", "byte_read_ago_2", "byte_read_ago_1", "byte_read"]
+	},
+	write: function(addr,val)
+	{
+		var cell = document.getElementById("cell_"+addr)
+		cell.classList.remove("byte_changed")
+		cell.classList.add("byte_wrote")
+		cell.innerHTML = BYTE(val)
+		this.bytes[addr] = BYTE(val)
+		if(is_stack(addr))
+		{
+			Stack.write(addr)
+			goto_stack(addr)
+		}
+
+		for(var takt in this.highlighted)
+		{
+			if(takt != Execution.takt && !this.highlighted[Execution.takt])
+				for(var _addr in this.highlighted[takt])
+				{
+					var _cell = document.getElementById("cell_"+_addr)
+					_cell.classList.remove( this.highlighted[takt][_addr].pop() )
+					var next = this.highlighted[takt][_addr].pop()
+					if(next)
+					{
+						_cell.classList.add(next)
+						this.highlighted[takt][_addr].push(next)
+					}
+				}
+		}
+		if(! this.highlighted[Execution.takt]) this.highlighted[Execution.takt] = {}
+		this.highlighted[Execution.takt][addr] = ["byte_wrote_ago_3", "byte_wrote_ago_2", "byte_wrote_ago_1", "byte_wrote"]
+	},
+	load: function(takt)
+	{
+		var cells, addr, byte, i
+		cells = document.getElementsByClassName("cell")
+		//shadow_on()
+		for(i = 0; i < cells.length; i++)
+		{
+			addr = cells[i].getAttribute("addr")
+			$.ajax( { url: "http://127.0.0.1:5000/data/" + addr + "/takt/" + Execution.takt + "/state",
+				dataType: 'json',
+				async: false } )
+			.done( function(results) {
+				if(results.length)
+				{
+					byte = results[0][0]
+					cells[i].classList.add("byte_updated")
+					if(cells[i].innerHTML != BYTE(byte))
+						cells[i].classList.add("byte_changed")
+					cells[i].innerHTML = BYTE(byte)
+					Memory.bytes[addr] = BYTE(byte)
+					if(is_stack(addr))
+						Stack.set(addr)
+				}
+			} )
+			//progress("loading memory: " + i + "/" + cells.length)
+		}
+		//shadow_off()
+	},
+	bpx: [],
+	bpm: [],
+}
+var Stack = {
+	highlighted: {},
+	set: function(addr)
+	{
+		addr = (addr >> 2) << 2
+		var stack = document.getElementById('stack'), val = Memory.DWORD(addr),
+		entry = document.getElementById("stack_"+addr)
+		if(! entry)
+		{
+			entry = document.createElement("div")
+			entry.id = "stack_"+addr
+			entry.addr = addr
+			if(stack.children.length)
+			{
+				for(var i = 0; i < stack.children.length; i++)
+					if(stack.children[i].addr > addr)
+						break
+				stack.insertBefore(entry, stack.children[i])
+			}
+			else
+				stack.appendChild(entry)
+		}
+		entry.innerHTML = DWORD(addr) + ": " + val + " " + telescope(val)
+	},
+	read: function(addr)
+	{
+		addr = (addr >> 2) << 2
+		var entry = document.getElementById("stack_"+addr)
+		entry.classList.add("stack_read")
+	},
+	write: function(addr)
+	{
+		addr = (addr >> 2) << 2
+		var entry = document.getElementById("stack_"+addr), val = Memory.DWORD(addr)
+		entry.classList.add("stack_wrote")
+		entry.innerHTML = DWORD(addr) + ": " + val + " " + telescope(val)
+	}
+}
 var Registers = {
 	highlighted: {},
 	set: function(regs)
@@ -178,81 +332,14 @@ var Registers = {
 		}
 	},
 }
-var Memory = {
-	highlighted: {},
-	access: function(addr)
-	{
-		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/access",
-			dataType: 'json',
-			async: false } )
-		.done( function(results) {
-			results.forEach( function(v) {} )
-		} )
-	},
-	read: function(addr)
-	{
-		var cell = document.getElementById("cell_"+addr)
-		cell.classList.add("byte_read")
-		if(0)
-		for(var _addr in this.highlighted)
-		{
-			var _cell = document.getElementById("cell_"+_addr)
-			_cell.classList.remove( this.highlighted[_addr].pop() )
-			var next = this.highlighted[_addr].pop()
-			if(next)
-			{
-				_cell.classList.add(next)
-				this.highlighted[_addr].push(next)
-			}
-		}
-		this.highlighted[addr] = ["byte_read_ago_3", "byte_read_ago_2", "byte_read_ago_1", "byte_read"]
-	},
-	write: function(addr,val)
-	{
-		var cell = document.getElementById("cell_"+addr)
-		cell.classList.add("byte_wrote")
-		cell.innerHTML = BYTE(val)
-		if(0)
-		for(var _addr in this.highlighted)
-		{
-			var _cell = document.getElementById("cell_"+_addr)
-			_cell.classList.remove( this.highlighted[_addr].pop() )
-			var next = this.highlighted[_addr].pop()
-			if(next)
-			{
-				_cell.classList.add(next)
-				this.highlighted[_addr].push(next)
-			}
-		}
-		this.highlighted[addr] = ["byte_wrote_ago_3", "byte_wrote_ago_2", "byte_wrote_ago_1", "byte_wrote"]
-	},
-	load: function(takt)
-	{
-		var cells, byte, i
-		cells = document.getElementsByClassName("cell")
-		for(i = 0; i < cells.length; i++)
-			$.ajax( { url: "http://127.0.0.1:5000/data/" + cells[i].getAttribute("addr") + "/takt/" + Execution.takt + "/state",
-				dataType: 'json',
-				async: false } )
-			.done( function(results) {
-				if(results.length)
-				{
-					byte = results[0][0]
-					cells[i].innerHTML = BYTE(byte)
-					cells[i].classList.add("byte_updated")
-				}
-			} )
-	},
-	//bpx: [],
-	//bmp: [],
-}
 var Execution = {
 	takt: 0,
 	highlighted: {},
 	instruction: function(takt)
 	{
-		var state, access, eip, addr, val, access_type, instr
-		$.ajax( { url: "http://127.0.0.1:5000/takt/" + takt + "/state",
+		var state, access, eip, addr, val, access_type, instr, hints = ''
+		this.takt = takt
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/state",
 			dataType: 'json',
 			async: false } )
 		.done( function(results) {
@@ -286,7 +373,7 @@ var Execution = {
 		}
 		this.highlighted[eip] = ["instruction_exec_ago_3", "instruction_exec_ago_2", "instruction_exec_ago_1", "instruction_current"]
 		
-		$.ajax( { url: "http://127.0.0.1:5000/takt/" + takt + "/access",
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/access",
 			dataType: 'json',
 			async: false } )
 		.done( function(results) {
@@ -296,15 +383,23 @@ var Execution = {
 				addr = access[1], val = access[2] , access_type = access[3]
 				goto_data(addr)
 				if(access_type == 'r')
+				{
 					Memory.read(addr)
+					if(! hints) hints = "[" + DWORD(addr) + "] -> "
+					hints += BYTE(val)
+				}
 				else if(access_type == 'w')
+				{
 					Memory.write(addr,val)
+					if(! hints) hints = "[" + DWORD(addr) + "] <- "
+					hints += BYTE(val)
+				}
 			}
 		} )
 
-		this.takt = takt
 		document.getElementById('trace_position').value = this.takt
-		document.getElementById('trace_position_value').innerHTML = this.takt
+		document.getElementById('trace_position_value').value = this.takt
+		document.getElementById('hints').innerHTML = hints
 		return eip
 	},
 	find_state: function(where,access)
@@ -320,6 +415,10 @@ var Execution = {
 	step: function()
 	{
 		goto_code( this.instruction(++this.takt) )
+	},
+	stepover: function()
+	{
+
 	},
 	step_back: function()
 	{
@@ -338,6 +437,11 @@ var Execution = {
 	states: function(addr) { return states },
 }
 
+function highlight(elem)
+{
+	$(elem).animate({opacity: 0.2})
+	setTimeout(function() {$(elem).animate({opacity: 1})}, 500)
+}
 function hotkeys(event)
 {
 	var
@@ -362,6 +466,9 @@ function hotkeys(event)
 			break
 		case F7:
 			Execution.step()
+			break
+		case F8:
+			Execution.stepover()
 			break
 		case F9:
 			Execution.cont()
