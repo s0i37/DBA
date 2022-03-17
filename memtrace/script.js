@@ -1,5 +1,7 @@
 function goto_code(addr)
 {
+	if(!addr)
+		return
 	var target = document.getElementById('instr_'+addr)
 	document.getElementById('code').scrollTop = target.offsetTop - 100
 	highlight(target)
@@ -7,6 +9,8 @@ function goto_code(addr)
 }
 function goto_data(addr)
 {
+	if(!addr)
+		return
 	var target = document.getElementById('cell_'+addr)
 	document.getElementById('data').scrollTop = target.parentElement.offsetTop - 100
 	highlight(target)
@@ -14,24 +18,34 @@ function goto_data(addr)
 }
 function goto_stack(addr)
 {
+	if(!addr)
+		return
 	addr = (addr >> 2) << 2
 	var target = document.getElementById('stack_'+addr)
-	document.getElementById('stack').scrollTop = target.offsetTop - 100
+	document.getElementById('stack').scrollTop = target.offsetTop - 10 - document.getElementById('stack') - document.getElementById('calls').offsetTop - 100
 	highlight(target)
 	return addr
+}
+function goto_tree(n)
+{
+	if(!n)
+		return
+	var call = document.getElementById('call_'+n)
+	document.getElementById('calls').scrollTop = call.offsetTop - 20 - document.getElementById('calls').offsetTop
+	return n
 }
 
 function takt_handler(event) {
 	var elem = event.target, takt
 	if(elem.id == 'trace_position' || elem.id == 'trace_position_value')
 	{
-		takt = elem.value
+		takt = parseInt(elem.value)
 		Memory.load(takt)
 		Execution.instruction(takt)
 	}
 	else if(elem.classList.contains('takt'))
 	{
-		takt = $(elem).attr('takt')
+		takt = parseInt($(elem).attr('takt'))
 		Memory.load(takt)
 		Execution.instruction(takt)
 	}
@@ -126,11 +140,13 @@ $(document).ready( function() {
 
 	document.getElementById('trace_position').onchange = takt_handler
 	document.getElementById('trace_position_value').onchange = takt_handler
-
+	/*
 	$('#code code').each(function(i, block) {
     	hljs.highlightBlock(block);
   	})
-
+	*/
+	Tree.load(CallsTree)
+	//$('#code_graph').dialog({title: 'code graph', width: '50%', height: '50%'})
 } )
 
 function telescope(addr)
@@ -164,6 +180,12 @@ var Memory = {
 	BYTE: function(addr) { return this.bytes[addr] },
 	WORD: function(addr) { return this.bytes[addr] + this.bytes[addr+1] },
 	DWORD: function(addr) { return this.bytes[addr] + this.bytes[addr+1] + this.bytes[addr+2] + this.bytes[addr+3] },
+	unhighlight: function()
+	{
+		var cells = document.getElementsByClassName("cell")
+		for(i = 0; i < cells.length; i++)
+			cells[i].classList.remove("byte_changed")
+	},
 	access: function(addr)
 	{
 		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/access",
@@ -236,10 +258,12 @@ var Memory = {
 	load: function(takt)
 	{
 		var cells, addr, byte, i
+		Memory.unhighlight()
 		cells = document.getElementsByClassName("cell")
-		//shadow_on()
+		$('#shadow').show().animate({opacity: 0.5})
 		for(i = 0; i < cells.length; i++)
 		{
+			console.log(i + "/" + cells.length)
 			addr = cells[i].getAttribute("addr")
 			$.ajax( { url: "http://127.0.0.1:5000/data/" + addr + "/takt/" + Execution.takt + "/state",
 				dataType: 'json',
@@ -257,16 +281,17 @@ var Memory = {
 						Stack.set(addr)
 				}
 			} )
-			//progress("loading memory: " + i + "/" + cells.length)
+			$("#progressbar").progressbar({value: parseInt(i/cells.length*100)})
 		}
-		//shadow_off()
+		$('#shadow').animate({opacity: 0}).hide()
+		$("#progressbar").hide()
 	},
 	bpx: [],
 	bpm: [],
 }
 var Stack = {
 	highlighted: {},
-	set: function(addr)
+	set: function(addr) //не учитывается заполнение пустот
 	{
 		addr = (addr >> 2) << 2
 		var stack = document.getElementById('stack'), val = Memory.DWORD(addr),
@@ -304,6 +329,7 @@ var Stack = {
 }
 var Registers = {
 	highlighted: {},
+	regs: {},
 	set: function(regs)
 	{
 		var reg, val, memory
@@ -311,6 +337,7 @@ var Registers = {
 		{
 			reg = document.getElementById(name)
 			val = regs[name]
+			this.regs[name] = val
 			if(reg.getElementsByClassName('value')[0].innerHTML == DWORD(val))
 			{
 				reg.classList.remove( this.highlighted[name].pop() )
@@ -331,13 +358,17 @@ var Registers = {
 			//reg.classList.add("reg_points_r")
 		}
 	},
+	get: function(reg)
+	{
+		return this.regs[reg]
+	}
 }
 var Execution = {
 	takt: 0,
 	highlighted: {},
 	instruction: function(takt)
 	{
-		var state, access, eip, addr, val, access_type, instr, hints = ''
+		var state, access, eip, reg, addr, val, access_type, instr, hints = ''
 		this.takt = takt
 		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/state",
 			dataType: 'json',
@@ -373,7 +404,7 @@ var Execution = {
 		}
 		this.highlighted[eip] = ["instruction_exec_ago_3", "instruction_exec_ago_2", "instruction_exec_ago_1", "instruction_current"]
 		
-		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/access",
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/mem/access",
 			dataType: 'json',
 			async: false } )
 		.done( function(results) {
@@ -395,22 +426,45 @@ var Execution = {
 					hints += BYTE(val)
 				}
 			}
+			if(hints)
+				hints += '<br>'
+		} )
+
+		$.ajax( { url: "http://127.0.0.1:5000/takt/" + this.takt + "/reg/access",
+			dataType: 'json',
+			async: false } )
+		.done( function(results) {
+			for(var i = 0; i < results.length; i++)
+			{
+				access = results[i]
+				reg = access[1], val = access[2] , access_type = access[3]
+				if(access_type == 'r')
+					hints += reg + " -> " + DWORD(val)
+				else if(access_type == 'w')
+					hints += reg + " <- " + DWORD(val)
+				hints += '<br>'
+			}
 		} )
 
 		document.getElementById('trace_position').value = this.takt
 		document.getElementById('trace_position_value').value = this.takt
 		document.getElementById('hints').innerHTML = hints
+		Tree.select(CallsTree, this.takt)
 		return eip
 	},
 	find_state: function(where,access)
 	{
-		$.ajax( { url: "http://127.0.0.1:5000/access/" + "after" + "/" + this.takt + "/takt",
+		var direction = Object.keys(where)[0], takt
+		$.ajax( { url: "http://127.0.0.1:5000/access/" + direction + "/" + where[direction] + "/takt",
 			dataType: 'json',
+			data: access,
 			async: false } )
 		.done( function(results) {
-			this.takt = results[0][0]
+			if(results.length)
+				takt = parseInt(results[0][0])
 		})
-		return this.takt
+		if(takt)
+			return this.instruction(takt)
 	},
 	step: function()
 	{
@@ -418,7 +472,14 @@ var Execution = {
 	},
 	stepover: function()
 	{
-
+		var eip = Registers.get("EIP"),
+			current_instr = document.getElementById('instr_'+eip),
+			next_instr = parseInt(current_instr.nextElementSibling.getElementsByTagName('a')[1].getAttribute('eip'))
+		console.log("jump " + DWORD(next_instr))
+		Memory.bpx.push(next_instr)
+		if( goto_code( this.find_state({after:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm}) ) )
+			Memory.load(this.takt)
+		Memory.bpx.pop()
 	},
 	step_back: function()
 	{
@@ -426,15 +487,41 @@ var Execution = {
 	},
 	cont: function()
 	{
-		goto_code( this.find_state({after:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm}) )
-		Memory.load(this.takt)
+		if( goto_code( this.find_state({after:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm}) ) )
+			Memory.load(this.takt)
 	},
 	cont_back: function()
 	{
-		goto_code( this.find_state({before:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm}) )
-		Memory.load(this.takt)
+		if( goto_code( this.find_state({before:this.takt}, {bpx:Memory.bpx, bpm:Memory.bpm}) ) )
+			Memory.load(this.takt)
 	},
 	states: function(addr) { return states },
+}
+var Tree = {
+	prev: null,
+	load: function(calls)
+	{
+		var func_name, out = document.getElementById('calls')
+		out.innerHTML=''
+		for(var i = 0; i < calls.length; i++)
+		{
+			//func_name = telescope(calls[i].addr)
+			out.innerHTML += '<div id="call_'+i+'">`' + '-'.repeat(calls[i].deep) + "0x" + DWORD(calls[i].addr) + '()</div>'
+		}
+	},
+	select: function(calls, takt)
+	{
+		for(var i = 0; i < calls.length; i++)
+			if(takt < calls[i].takt)
+			{
+				goto_tree(i)
+				if(this.prev)
+					document.getElementById('call_'+this.prev).classList.remove('call_current')	
+				document.getElementById('call_'+i).classList.add('call_current')
+				this.prev = i
+				return i
+			}
+	}
 }
 
 function highlight(elem)
@@ -483,12 +570,15 @@ Call tree визуализация:
 	https://github.com/fzaninotto/CodeFlower
 	https://github.com/patorjk/d3-context-menu
 	https://github.com/q-m/d3.chart.sankey
+	https://gojs.net/latest/samples/tLayout.html
+	https://gojs.net/latest/samples/treeView.html
 	d3js Sequences sunburst
 Bar визуализация:
-	https://github.com/flrs/visavail
+	https://github.com/flrs/visavail -заточена только под даты
 Code graph визуализация:
 	https://github.com/dagrejs/dagre-d3/wiki
-Graph визуализация:
+	https://gojs.net/latest/samples/localView.html
+Map визуализация:
 	http://bl.ocks.org/ianyfchang/8119685
 	https://datascience.stackexchange.com/questions/10484/heatmap-color-and-d3-js
 Filament визуализация:

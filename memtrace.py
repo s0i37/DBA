@@ -5,6 +5,7 @@ from flask import Flask, request, url_for, render_template, Response, stream_wit
 from flask_cors import CORS
 import sqlite3
 import argparse
+import pydot
 from sys import stdout
 from os import path
 import json
@@ -21,10 +22,14 @@ args = parser.parse_args()
 
 c = sqlite3.connect("memory.db", check_same_thread=False)
 cc = c.cursor()
+code_flow = {}
+calls = {}
+tree = []
 
 def db_init():
 	cc.execute("CREATE TABLE cpu(takt BIGINT, thread_id INTEGER, eax BIGINT, ecx BIGINT, edx BIGINT, ebx BIGINT, esp BIGINT, ebp BIGINT, esi BIGINT, edi BIGINT, eip BIGINT)")
 	cc.execute("CREATE TABLE mem(takt BIGINT, addr BIGINT, value BIGINT, access_type CHARACTER(1))")
+	cc.execute("CREATE TABLE reg(takt BIGINT, reg CHARACTER(3), value BIGINT, access_type CHARACTER(1))")
 	c.commit()
 
 class Pages:
@@ -40,6 +45,13 @@ class Memory:
 	syscalls = []
 	pages = Pages
 	code = {}
+
+class Flow:
+	code = {}
+	blocks = {}
+	functions = []
+
+flow = Flow()
 
 def in_heap(addr):
 	heap_number = 0
@@ -61,9 +73,22 @@ def get_page_type(addr):
 			return "stack"
 	return "heap"
 
+def get_node(eip):
+	node_id = max(flow.blocks.keys()) + 1
+	for node in flow.blocks:
+		if eip in flow.blocks[node]['range']:
+			node_id = node
+			break
+	return node_id
+
 def load_trace(tracefile):
 	with Trace( open(tracefile) ) as trace:
 		after_heap_allocate = None
+		node_id = 0
+		is_call = False
+		is_jump = False
+		is_ret = False
+		functions = []
 		try:
 			while True:
 				used_registers, used_memory = None, None
@@ -82,6 +107,57 @@ def load_trace(tracefile):
 					'opcode': trace.cpu.opcode,
 					'disas': trace.cpu.disas()
 				} )
+
+				# function and basic blocks recognition
+				if not trace.cpu.eip_before in flow.code: # uncovered code
+					if is_jump:
+						flow.blocks[node_id]['to'] = get_node(trace.cpu.eip_before)
+						node_id = flow.blocks[node_id]['to']
+					elif is_ret:
+						node_id = get_node(trace.cpu.eip_before)
+
+					if is_call:
+						functions.append({"start": trace.cpu.eip_before, "end": None})
+					
+					is_call = False
+					is_jump = False
+					is_ret = False
+					if trace.cpu.disas().startswith('call'):
+						is_call = True
+					elif trace.cpu.disas().startswith('j'):
+						is_jump = True
+					elif trace.cpu.disas().startswith('ret'):
+						is_ret = True
+					
+					if is_ret:
+						if functions:
+							function = functions.pop()
+							function["end"] = trace.cpu.eip_before
+							if not function in flow.functions:
+								flow.functions.append(function)
+
+					if not node_id in flow.blocks:
+						flow.blocks[node_id] = {'instr': [], 'range': [], 'to': None}
+					if not trace.cpu.eip_before in flow.blocks[node_id]['instr']:
+						flow.blocks[node_id]['instr'].append(trace.cpu.eip_before)
+						flow.blocks[node_id]['range'].extend([trace.cpu.eip_before])
+					#flow.blocks[node_id]['range'].extend(range(trace.cpu.eip_before, trace.cpu.eip_before+len(trace.cpu.opcode)/2))
+					flow.code[trace.cpu.eip_before] = {'opcode': trace.cpu.opcode, 'disas': trace.cpu.disas()}
+
+				# calls tree collecting
+				if not trace.cpu.thread_id in calls.keys():
+					calls[trace.cpu.thread_id] = {'called': None, 'deep': 0}
+				if not calls[trace.cpu.thread_id]['called']:
+					calls[trace.cpu.thread_id]['called'] = trace.cpu.eip_before
+					tree.append({"deep": calls[trace.cpu.thread_id]['deep'], "addr": calls[trace.cpu.thread_id]['called'], "takt": trace.cpu.takt})
+				if trace.cpu.disas().startswith('call'):
+					calls[trace.cpu.thread_id]['called'] = None
+					calls[trace.cpu.thread_id]['deep'] += 1
+					#print calls[trace.cpu.thread_id]['deep']
+				elif trace.cpu.disas().startswith('ret'):
+					if calls[trace.cpu.thread_id]['deep'] > 0:
+						calls[trace.cpu.thread_id]['deep'] -= 1
+
 
 				cc.execute("INSERT INTO cpu VALUES(0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x)" % (
 					trace.cpu.takt,
@@ -109,6 +185,13 @@ def load_trace(tracefile):
 				page <<= 12
 				if not "code.0x%08x"%page in Memory.modules:
 					Memory.modules["code.0x%08x"%page] = [page, page|0xfff]
+
+				if used_registers:
+					regs_r, regs_w = used_registers
+					for reg_r in regs_r:
+						cc.execute("INSERT INTO reg VALUES(?,?,?,'r')", (trace.cpu.takt,reg_r,trace.cpu.get(reg_r)))
+					for reg_w in regs_w:
+						cc.execute("INSERT INTO reg VALUES(?,?,?,'w')", (trace.cpu.takt,reg_w,trace.cpu.get(reg_w)))
 
 				if used_memory:
 					mems_r, mems_w = used_memory
@@ -145,10 +228,11 @@ def load_trace(tracefile):
 		except StopExecution:
 			for module in trace.modules:
 				Memory.modules[module.name] = (module.start, module.end)
-			#cc.execute("CREATE INDEX takt_cpu_index ON cpu(takt)")
-			#cc.execute("CREATE INDEX eip_cpu_index ON cpu(eip)")
-			#cc.execute("CREATE INDEX takt_mem_index ON mem(takt)")
-			#cc.execute("CREATE INDEX addr_mem_index ON mem(addr)")
+			cc.execute("CREATE INDEX takt_cpu_index ON cpu(takt)")
+			cc.execute("CREATE INDEX eip_cpu_index ON cpu(eip)")
+			cc.execute("CREATE INDEX takt_mem_index ON mem(takt)")
+			cc.execute("CREATE INDEX addr_mem_index ON mem(addr)")
+			cc.execute("CREATE INDEX takt_reg_index ON reg(takt)")
 			c.commit()
 
 		except Exception as e:
@@ -156,6 +240,7 @@ def load_trace(tracefile):
 			print hex(trace.cpu.eip_before)
 			import traceback; traceback.print_exc()
 
+	#import ipdb;ipdb.set_trace()
 	addresses = Memory.writes.keys() + Memory.reads.keys()
 	addresses.sort()
 	for addr in addresses:
@@ -188,12 +273,13 @@ def create_html(outfile='out.html'):
 		body { background-color: white; color: black; }
 		#trace_position { float: left; width: 95%; }
 		#trace_position_value { float: left; width: 4%; }
-		#code { float: left; width: 60%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
-		#regs { float: left; width: 39%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
-		#hints { float: left; width: 60%; height: 5%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
-		#calls { float: left; width: 39%; height: 5%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#code { float: left; width: 60%; height: 40%; overflow-x: scroll; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#regs { float: left; width: 39%; height: 40%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#hints { float: left; width: 60%; height: 10%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#calls { float: left; width: 39%; height: 10%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
 		#data { float: left; width: 60%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
 		#stack { float: left; width: 39%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
+		#code_graph { display: none; }
 		#data table, #code table { width: 100%; }
 		.heap0 { border: 2px solid blue; }
 		.heap1 { border: 2px solid black; }
@@ -208,7 +294,7 @@ def create_html(outfile='out.html'):
 		.byte_read_ago_2 { color: #007700; font-weight: bold; }
 		.byte_read_ago_3 { color: #003300; }
 		.byte_updated { font-weight: bold; }
-		.byte_changed { color: #007777; }
+		.byte_changed { color: #cccc00; }
 		.stack_read { color: #00ff00; }
 		.stack_wrote { color: #ff0000; }
 		.reg_changed { background-color: #00ffff; }
@@ -223,13 +309,18 @@ def create_html(outfile='out.html'):
 		.instruction_exec_ago_1 { background-color: #007777; }
 		.instruction_exec_ago_2 { background-color: #00cccc; }
 		.instruction_exec_ago_3 { background-color: #00ffff; }
+		.call_current { color: green; text-decoration: underline; }
+		#progressbar { position: absolute; width: 60%; left: 25%; top: 50%; z-index: 999; }
+		#shadow { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: none; background: black; z-index: 99; }
 		.ui-dialog-titlebar { padding: 2px !important; }
 		</style>
 		<div id="dialog"></div>
 		<div id="dialog2"></div>
+		<div id="shadow"></div>
 	''')
 
 	out.write('<div><input type="range" id="trace_position" min="253000000" max="253005638" step=1 value=253000000><input type="text" id="trace_position_value" value=0></div>')
+	
 	out.write("<div id='code'><table><tbody>")
 	for page in Memory.pages.code:
 		#eip = page
@@ -251,6 +342,19 @@ def create_html(outfile='out.html'):
 			#if eip >= page + WHITESPACE_PADDING_SIZE:
 			#	break
 	out.write("</tbody></table></div>")
+	
+	code_flow_graph = pydot.Dot(graph_type='digraph')
+	for block_id in flow.blocks:
+		block = ""
+		for eip in flow.blocks[block_id]['instr']:
+			block += hex(eip) + ": " + flow.code[eip]['disas'] + "\n"
+		code_flow_graph.add_node( pydot.Node(block_id, label=block, shape='box') )
+	for block_id in flow.blocks:
+		if flow.blocks[block_id]['to']:
+			code_flow_graph.add_edge( pydot.Edge(block_id, flow.blocks[block_id]['to']) )
+	code_flow_graph.write_svg('/tmp/code_flow.svg')
+	with open('/tmp/code_flow.svg', 'r') as f:
+		out.write("<div id='code_graph'>" + f.read() + "</div>")
 
 	out.write('<div id="regs">')
 	out.write('<div id="EAX">EAX: <span class="value">00000000</span> <span class="hints"></span></div>')
@@ -331,7 +435,11 @@ def create_html(outfile='out.html'):
 
 	out.write("<div id='stack'></div>")
 
+	out.write('<div id="progressbar"></div>')
+
 	out.write("<script>var MemoryMap = {}</script>".format(json.dumps(Memory.modules)))
+	out.write("<script>var CallsTree = {}</script>".format(json.dumps(tree)))
+	out.write("<script>var Functions = {}</script>".format(json.dumps(flow.functions)))
 	out.close()
 
 	print("uniq instructions: ")
@@ -370,8 +478,17 @@ if __name__ == '__main__':
 			results.append((eax,ecx,edx,ebx,esp,ebp,esi,edi,eip))
 		return json.dumps(results)
 
-	@www.route('/takt/<int:takt>/access')
-	def takt_access(takt):
+	@www.route('/takt/<int:takt>/reg/access')
+	def takt_reg_access(takt):
+		results = []
+		print takt
+		for (takt,reg,value,access_type) in cc.execute("SELECT reg.* FROM reg JOIN cpu ON reg.takt=cpu.takt WHERE cpu.takt=?", (takt,)):
+			print "takt: %d, reg: %s, value: %X, access_type: %s" % (takt,reg,value,access_type)
+			results.append( (takt,reg,value,access_type) )
+		return json.dumps(results)
+
+	@www.route('/takt/<int:takt>/mem/access')
+	def takt_mem_access(takt):
 		results = []
 		print takt
 		for (takt,addr,value,access_type) in cc.execute("SELECT mem.* FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE cpu.takt=?", (takt,)):
@@ -391,15 +508,26 @@ if __name__ == '__main__':
 	@www.route('/access/before/<int:takt>/takt')
 	def find_takt_before(takt):
 		results = []
-		print takt
-		for (takt,) in cc.execute("SELECT cpu.takt FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE ...", ()):
-			print "byte: %d" % (byte,)
+		bpx = map(int, request.args.getlist('bpx[]'))
+		bpm = map(int, request.args.getlist('bpm[]'))
+		for (takt,) in cc.execute("SELECT cpu.takt FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE cpu.takt < ? and (cpu.eip in (%s) or mem.addr in (%s))" % (','.join('?'*len(bpx)), ','.join('?'*len(bpm))), [takt] + bpx + bpm):
+			print "takt: %d" % (takt,)
 			results.append( (takt,) )
+			break
 		return json.dumps(results)
 
 	@www.route('/access/after/<int:takt>/takt')
 	def find_takt_after(takt):
-		pass
+		results = []
+		bpx = map(int, request.args.getlist('bpx[]'))
+		bpm = map(int, request.args.getlist('bpm[]'))
+		print "SELECT cpu.takt FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE cpu.takt > ? and (cpu.eip in (%s) or mem.addr in (%s))" % (','.join('?'*len(bpx)), ','.join('?'*len(bpm)))
+		print [takt] + bpx + bpm
+		for (takt,) in cc.execute("SELECT cpu.takt FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE cpu.takt > ? and (cpu.eip in (%s) or mem.addr in (%s))" % (','.join('?'*len(bpx)), ','.join('?'*len(bpm))), [takt] + bpx + bpm):
+			print "takt: %d" % (takt,)
+			results.append( (takt,) )
+			break
+		return json.dumps(results)
 
 	CORS(www)
 	www.run(debug=True, use_reloader=False)
