@@ -25,6 +25,7 @@ cc = c.cursor()
 code_flow = {}
 calls = {}
 tree = []
+tree_consolidated = {'name': 0, 'children': [], 'called': None, 'value': 0}
 
 def db_init():
 	cc.execute("CREATE TABLE cpu(takt BIGINT, thread_id INTEGER, eax BIGINT, ecx BIGINT, edx BIGINT, ebx BIGINT, esp BIGINT, ebp BIGINT, esi BIGINT, edi BIGINT, eip BIGINT)")
@@ -88,7 +89,10 @@ def load_trace(tracefile):
 		is_call = False
 		is_jump = False
 		is_ret = False
+		is_call_ = False
 		functions = []
+		ptr = tree_consolidated
+		delta = 0
 		try:
 			while True:
 				used_registers, used_memory = None, None
@@ -157,6 +161,34 @@ def load_trace(tracefile):
 				elif trace.cpu.disas().startswith('ret'):
 					if calls[trace.cpu.thread_id]['deep'] > 0:
 						calls[trace.cpu.thread_id]['deep'] -= 1
+
+				# calls tree consolidated collecting
+				delta += 1
+				if not tree_consolidated['name']:
+					tree_consolidated['name'] = trace.cpu.eip_before
+				if is_call_:
+					is_new = True
+					for sub in ptr['children']:
+						if sub['name'] == trace.cpu.eip_before:
+							ptr['value'] += delta
+							delta = 0
+							ptr = sub
+							is_new = False
+							break
+					if is_new:
+						ptr['value'] += delta
+						delta = 0
+						called = ptr
+						ptr['children'].append({'name': trace.cpu.eip_before, 'children': [], 'called': called, 'value': 0})
+						ptr = ptr['children'][-1]
+				is_call_ = False
+				if trace.cpu.disas().split()[0] == 'call':
+					is_call_ = True
+				elif trace.cpu.disas().split()[0] == 'ret':
+					if ptr['called']:
+						ptr['value'] += delta
+						delta = 0
+						ptr = ptr['called']
 
 
 				cc.execute("INSERT INTO cpu VALUES(0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x)" % (
@@ -263,11 +295,16 @@ def create_html(outfile='out.html'):
 	operation_count_reads = 0
 	out.write('''
 		<link rel="stylesheet" href="memtrace/jquery-ui/themes/smoothness/jquery-ui.min.css">
+		<link rel="stylesheet" href="memtrace/bootstrap/bootstrap.min.css">
+		<link rel="stylesheet" href="memtrace/d3-flame-graph/d3-flamegraph.css">
 		<link rel="stylesheet" href="memtrace/highlightjs/styles/default.css">
 		<script src="memtrace/jquery/dist/jquery.js"></script>
 		<script src="memtrace/jquery-ui/jquery-ui.js"></script>
 		<script src="memtrace/highlightjs/highlight.pack.js"></script>
 		<script src="memtrace/sprintf/sprintf.js"></script>
+		<script src="memtrace/d3/d3.v4.min.js" charset="utf-8"></script>
+    	<script src="memtrace/d3/d3-tip.min.js"></script>
+    	<script src="memtrace/d3-flame-graph/d3-flamegraph.min.js"></script>
 		<script src="memtrace/script.js?v=0.20"></script>
 		<style>
 		body { background-color: white; color: black; }
@@ -280,6 +317,7 @@ def create_html(outfile='out.html'):
 		#data { float: left; width: 60%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
 		#stack { float: left; width: 39%; height: 45%; overflow-y: scroll; border: 1px solid black; padding: 2px; }
 		#code_graph { display: none; }
+		#flame { display: none; }
 		#data table, #code table { width: 100%; }
 		.heap0 { border: 2px solid blue; }
 		.heap1 { border: 2px solid black; }
@@ -313,6 +351,7 @@ def create_html(outfile='out.html'):
 		#progressbar { position: absolute; width: 60%; left: 25%; top: 50%; z-index: 999; }
 		#shadow { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: none; background: black; z-index: 99; }
 		.ui-dialog-titlebar { padding: 2px !important; }
+		.hljs { padding: 0 !important; }
 		</style>
 		<div id="dialog"></div>
 		<div id="dialog2"></div>
@@ -433,12 +472,21 @@ def create_html(outfile='out.html'):
 		out.write("</tr>")
 	out.write("</tbody></table></div>")
 
-	out.write("<div id='stack'></div>")
-
+	out.write('<div id="stack"></div>')
 	out.write('<div id="progressbar"></div>')
+	out.write('<div id="flame"><div id="chart"></div><div id="details"></div></div>')
 
 	out.write("<script>var MemoryMap = {}</script>".format(json.dumps(Memory.modules)))
 	out.write("<script>var CallsTree = {}</script>".format(json.dumps(tree)))
+
+	def walk(call):
+		del(call['called'])
+		call['name'] = "0x%08x"%call['name']
+		for sub in call['children']:
+			walk(sub)
+	walk(tree_consolidated)
+
+	out.write("<script>var CallsTreeConsolidated = {}</script>".format(json.dumps(tree_consolidated)))
 	out.write("<script>var Functions = {}</script>".format(json.dumps(flow.functions)))
 	out.close()
 

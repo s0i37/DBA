@@ -140,15 +140,35 @@ $(document).ready( function() {
 
 	document.getElementById('trace_position').onchange = takt_handler
 	document.getElementById('trace_position_value').onchange = takt_handler
-	/*
+	
 	$('#code code').each(function(i, block) {
     	hljs.highlightBlock(block);
   	})
-	*/
+	
 	Tree.load(CallsTree)
 	//$('#code_graph').dialog({title: 'code graph', width: '50%', height: '50%'})
+	init_flame(CallsTreeConsolidated)
+	$('#flame').dialog({title: 'calls tree', width: '50%', height: '50%'})
 } )
 
+function init_flame(calls_tree_consolidated)
+{
+	var flameGraph = d3.flamegraph()
+      .width(960)
+      .cellHeight(18)
+      .transitionDuration(750)
+      .minFrameSize(5)
+      .transitionEase(d3.easeCubic)
+      .sort(true)
+      .title("")
+      .differential(false)
+      .selfValue(false);
+    var details = document.getElementById("details");
+    flameGraph.setDetailsElement(details);
+    d3.select("#chart")
+        .datum(calls_tree_consolidated)
+        .call(flameGraph);
+}
 function telescope(addr)
 {
 	for(var page in MemoryMap)
@@ -172,6 +192,15 @@ function WORD(val)
 function DWORD(val)
 {
 	return sprintf("%08X", val)
+}
+function HEX(val)
+{
+	if(val < 0x100)
+		return BYTE(val)
+	else if(val < 0x10000)
+		return WORD(val)
+	else if(val < 0x100000000)
+		return DWORD(val)
 }
 
 var Memory = {
@@ -542,22 +571,28 @@ function hotkeys(event)
 	switch(event.keyCode)
 	{
 		case F2:
+		case 50:
 			//Memory.bpx.push()
 			//Memory.bpm.push()
 			break
 		case F4:
+		case 52:
 			Execution.cont_back()
 			break
 		case F6:
+		case 54:
 			Execution.step_back()
 			break
 		case F7:
+		case 55:
 			Execution.step()
 			break
 		case F8:
+		case 56:
 			Execution.stepover()
 			break
 		case F9:
+		case 57:
 			Execution.cont()
 			break
 	}
@@ -566,7 +601,7 @@ $(document).bind('keydown', hotkeys)
 
 /*
 Call tree визуализация:
-	https://github.com/spiermar/d3-flame-graph
+	https://github.com/spiermar/d3-flame-graph +
 	https://github.com/fzaninotto/CodeFlower
 	https://github.com/patorjk/d3-context-menu
 	https://github.com/q-m/d3.chart.sankey
