@@ -2,7 +2,7 @@ from unicorn import *
 from unicorn.x86_const import *
 from capstone import *
 from capstone.x86 import *
-from sys import stdout
+from sys import stdout, stderr
 from os.path import basename
 import struct
 import string
@@ -443,7 +443,8 @@ class MCH:
 
 	def allocate(self, region):
 		if not region in self.allocated_regions:
-			print colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET,
+			stderr.write(colorama.Fore.BLUE + "\n[*] allocate 0x%08x" % region + colorama.Fore.RESET)
+			stderr.flush()
 			self.mu.mem_map( region, PAGE_SIZE )
 			self.allocated_regions.add( region )
 			page = Page(region)
@@ -453,7 +454,8 @@ class MCH:
 	def free(self):
 		for region in self.allocated_regions:
 			self.mu.mem_unmap(region, PAGE_SIZE)
-			print colorama.Fore.BLUE + "\n[*] free 0x%08x" % (region,) + colorama.Fore.RESET,
+			stderr.write(colorama.Fore.BLUE + "\n[*] free 0x%08x" % (region,) + colorama.Fore.RESET)
+			stderr.flush()
 			self.allocated_regions.remove(region)
 
 
@@ -646,9 +648,9 @@ class Trace:
 
 
 		if self.cpu.takt and not self.cpu.takt % 10000:
-			stdout.write("\r" + " "*75)
-			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
-			stdout.flush()
+			stderr.write("\r" + " "*75)
+			stderr.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
+			stderr.flush()
 
 	def instruction(self):
 		'''
@@ -677,9 +679,9 @@ class Trace:
 			print "\n".join( map( hex, self.callstack[ self.cpu.thread_id ] ) )
 
 		if self.cpu.takt and not self.cpu.takt % 1000:
-			stdout.write("\r" + " "*75)
-			stdout.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
-			stdout.flush()
+			stderr.write("\r" + " "*75)
+			stderr.write( colorama.Fore.CYAN + "\r[*] %d:0x%08x: %s" % (self.cpu.takt, self.cpu.eip_before, self.cpu.disas()) + colorama.Fore.RESET )
+			stderr.flush()
 		
 		if self.cpu.disas().split()[0] in ('ret', 'call', 'int') or self.cpu.disas().split()[0].startswith('j'):
 			if self.cpu.disas().split()[0] == 'call':
@@ -695,7 +697,8 @@ class Trace:
 			#return # problem with emulation call/jmp/ret/int instructions
 
 		if self.cpu.disas().split()[0] == 'sysenter':
-			print colorama.Fore.CYAN + "\n[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET,
+			stderr.write(colorama.Fore.CYAN + "\n[*] %d:sysenter (EAX=0x%x)" % (self.cpu.takt, self.cpu.eax_before) + colorama.Fore.RESET)
+			stderr.flush()
 
 		self.io.save(self.cpu.eip_before, self.cpu.opcode)
 		self.io.readed_cells = set()
