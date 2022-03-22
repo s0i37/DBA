@@ -16,13 +16,13 @@ WHITESPACE_PADDING_SIZE = 0x50
 
 parser = argparse.ArgumentParser( description='data flow analisys tool' )
 parser.add_argument("tracefile", type=str, help="trace.txt")
+#parser.add_argument("decompiled", type=str, help="code.json (pdgj)")
 parser.add_argument("-from_takt", type=int, default=0, help="trace memory only after takt")
 parser.add_argument("-to_takt", type=int, default=0, help="trace memory only before takt")
 args = parser.parse_args()
 
 c = sqlite3.connect("memory.db", check_same_thread=False)
 cc = c.cursor()
-code_flow = {}
 calls = {}
 tree = []
 tree_consolidated = {'name': 0, 'children': [], 'called': None, 'value': 0}
@@ -73,6 +73,11 @@ def get_page_type(addr):
 		if page <= addr < page | 0xfff:
 			return "stack"
 	return "heap"
+
+def get_function(eip):
+	for function in flow.functions:
+		if function['start'] <= eip < function['end']:
+			return function['start']
 
 def get_node(eip):
 	node_id = max(flow.blocks.keys()) + 1
@@ -203,7 +208,7 @@ def load_trace(tracefile):
 					trace.cpu.esi_before,
 					trace.cpu.edi_before,
 					trace.cpu.eip_before
-				) )
+				))
 
 				page = trace.cpu.esp_before
 				page >>= 12
@@ -322,7 +327,7 @@ def create_html(outfile='out.html'):
 		.heap0 { border: 2px solid blue; }
 		.heap1 { border: 2px solid black; }
 		.state, .instructionr, .instructionw, .memoryr, .memoryw { font-size: 9pt; }
-		.cell, .instr, .takt, .addr { cursor: pointer; }
+		.cell, .instr, .takt, .addr, .call { cursor: pointer; }
 		.byte_wrote { color: #ffffff; font-weight: bold; font-size: large; }
 		.byte_wrote_ago_1 { color: #cccccc; font-weight: bold; }
 		.byte_wrote_ago_2 { color: #777777; font-weight: bold; }
@@ -334,7 +339,13 @@ def create_html(outfile='out.html'):
 		.byte_updated { font-weight: bold; }
 		.byte_changed { color: #cccc00; }
 		.stack_read { color: #00ff00; }
+		.stack_read_ago_1 { color: #00cc00; font-weight: bold; }
+		.stack_read_ago_2 { color: #007700; font-weight: bold; }
+		.stack_read_ago_3 { color: #003300; }
 		.stack_wrote { color: #ff0000; }
+		.stack_wrote_ago_1 { color: #cccccc; font-weight: bold; }
+		.stack_wrote_ago_2 { color: #777777; font-weight: bold; }
+		.stack_wrote_ago_3 { color: #333333; }
 		.reg_changed { background-color: #00ffff; }
 		.reg_changed_ago_1 { background-color: #aaffff; }
 		.reg_changed_ago_2 { background-color: #eeffff; }
@@ -373,10 +384,10 @@ def create_html(outfile='out.html'):
 				disas = Memory.code[eip][0]['disas']
 				css_color_gradient = executions * 10 if executions * 10 < 255 else 255
 				css_color_executions = "#ffff%02x" % (0xff-css_color_gradient,)
-				out.write('<tr id="instr_%(eip)d" style="background-color:%(color)s"><td><a href="#">%(exec_count)d</a></td><td><a href="#" class="instr" eip=%(eip)d>0x%(eip)08x</a></td><td>%(opcode)s</td><td><code>%(instr)s</code></td></tr>' % { 'color': css_color_executions, 'exec_count': executions, 'eip': eip, 'opcode': opcode.encode('hex'), 'instr': disas })
+				out.write('<tr id="instr_%(eip)d" style="background-color:%(color)s"><td><a href="#" class="instr" eip=%(eip)d>%(exec_count)d</a></td><td>%(func)s</td><td>0x%(eip)08x</td><td>%(opcode)s</td><td><code>%(instr)s</code></td></tr>' % { 'color': css_color_executions, 'exec_count': executions, 'func': "fcn.%08x"%(get_function(eip) or 0), 'eip': eip, 'opcode': (opcode.encode('hex')[:10]+'..' if len(opcode.encode('hex'))>10 else opcode.encode('hex')), 'instr': disas })
 				eip += len(opcode) #!!! DBT trace has wrong opcode
 			else:
-				out.write('<tr><td></td><td>0x%(eip)08x</td><td>**</td><td>**</td></tr>' % { 'eip': eip })
+				out.write('<tr><td></td><td></td><td>0x%(eip)08x</td><td>**</td><td>**</td></tr>' % { 'eip': eip })
 				eip += 1
 			#if eip >= page + WHITESPACE_PADDING_SIZE:
 			#	break
@@ -515,6 +526,9 @@ if __name__ == '__main__':
 		for (takt,addr,value,access_type) in cc.execute("SELECT mem.* FROM mem JOIN cpu ON mem.takt=cpu.takt WHERE cpu.eip=?", (addr,)):
 			print "takt: %d, addr: 0x%x, value: %X, access_type: %s" % (takt,addr,value,access_type)
 			results.append( (takt,addr,value,access_type) )
+		if not results:
+			for (takt,) in cc.execute("SELECT cpu.takt FROM cpu WHERE cpu.eip=?", (addr,)):
+				results.append( (takt,None,None,'') )
 		return json.dumps(results)
 
 	@www.route('/takt/<int:takt>/state')

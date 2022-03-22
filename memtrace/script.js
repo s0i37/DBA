@@ -22,7 +22,7 @@ function goto_stack(addr)
 		return
 	addr = (addr >> 2) << 2
 	var target = document.getElementById('stack_'+addr)
-	document.getElementById('stack').scrollTop = target.offsetTop - 10 - document.getElementById('stack') - document.getElementById('calls').offsetTop - 100
+	document.getElementById('stack').scrollTop = target.offsetTop - 10 - document.getElementById('stack').offsetTop - document.getElementById('calls').offsetTop - 100
 	highlight(target)
 	return addr
 }
@@ -35,7 +35,8 @@ function goto_tree(n)
 	return n
 }
 
-function takt_handler(event) {
+function takt_handler(event)
+{
 	var elem = event.target, takt
 	if(elem.id == 'trace_position' || elem.id == 'trace_position_value')
 	{
@@ -49,6 +50,37 @@ function takt_handler(event) {
 		Memory.load(takt)
 		Execution.instruction(takt)
 	}
+}
+function takt_handler_preview(takt)
+{
+	Tree.select(CallsTree, takt)
+	$.ajax( { url: "http://127.0.0.1:5000/takt/" + takt + "/state",
+		dataType: 'json',
+		async: false } )
+	.done( function(results) {
+		state = results[0]
+		eip = state[8]
+		goto_code(eip)
+	} )
+
+	$.ajax( { url: "http://127.0.0.1:5000/takt/" + takt + "/mem/access",
+		dataType: 'json',
+		async: false } )
+	.done( function(results) {
+		for(var i = 0; i < results.length; i++)
+		{
+			access = results[i]
+			addr = access[1]
+			goto_data(addr)
+		}
+	} )
+}
+function tree_handler(event)
+{
+	var elem = event.target, takt
+	takt = parseInt($(elem).attr('takt'))
+	Memory.load(takt)
+	Execution.instruction(takt)
 }
 
 $(document).ready( function() {
@@ -74,9 +106,9 @@ $(document).ready( function() {
 						//console.log(v)
 						var takt = v[0], eip = v[1], val = v[2], access_type = v[3]
 						if(access_type == 'w')
-							out += '<div class="access_write"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_code(' + eip + ')">0x' + DWORD(eip) + '</a> <- ' + BYTE(val) + '</div>'
+							out += '<div class="access_write"><span class="takt" style="'+((takt>Execution.takt)?'background: yellow':'')+'" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_code(' + eip + ')">0x' + DWORD(eip) + '</a> <- ' + BYTE(val) + '</div>'
 						else if(access_type == 'r')
-							out += '<div class="access_read"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_code(' + eip + ')">0x' + DWORD(eip) + '</a> -> ' + BYTE(val) + '</div>'
+							out += '<div class="access_read"><span class="takt" style="'+((takt>Execution.takt)?'background: yellow':'')+'" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_code(' + eip + ')">0x' + DWORD(eip) + '</a> -> ' + BYTE(val) + '</div>'
 					} )
 					$('#dialog').dialog("option", "width", 400);
 		  			$('#dialog').html(out)
@@ -95,6 +127,7 @@ $(document).ready( function() {
 		$('#dialog').dialog( {
 		  	modal: false,
 		  	maxHeight: 500,
+		  	title: 'changes',
 		  	open: function()
 		  	{
 		  		var elem = event.target
@@ -120,12 +153,13 @@ $(document).ready( function() {
 						//console.log(v)
 						var takt = v[0], addr = v[1], val = v[2], access_type = v[3]
 						if(access_type == 'w')
-							out += '<div class="access_write"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_data(' + addr + ')">0x' + DWORD(addr) + '</a> <- ' + BYTE(val) + '</div>'
+							out += '<div class="access_write"><span class="takt" style="'+((takt>Execution.takt)?'background: yellow':'')+'" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_data(' + addr + ')">0x' + DWORD(addr) + '</a> <- ' + BYTE(val) + '</div>'
 						else if(access_type == 'r')
-							out += '<div class="access_read"><span class="takt" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_data(' + addr + ')">0x' + DWORD(addr) + '</a> -> ' + BYTE(val) + '</div>'
+							out += '<div class="access_read"><span class="takt" style="'+((takt>Execution.takt)?'background: yellow':'')+'" takt=' + takt + '>' + takt + '</span>  <a class="addr" onclick="goto_data(' + addr + ')">0x' + DWORD(addr) + '</a> -> ' + BYTE(val) + '</div>'
+						else
+							out += '<div><span class="takt" style="'+((takt>Execution.takt)?'background: yellow':'')+'" takt=' + takt + '>' + takt + '</span></div>'
 					} )
 					$('#dialog').dialog("option", "width", 400);
-		  			$('#dialog').dialog("option", "title", 'memory operations');
 		  			$('#dialog').html(out)
 				} )		  		
 		  	},
@@ -138,6 +172,9 @@ $(document).ready( function() {
 		$('#dialog').click(takt_handler)
 	} )
 
+	var intr
+	document.getElementById('trace_position').onmousedown = function(event){ intr=setInterval(function(){ takt_handler_preview(event.target.value) }, 500) }
+	document.getElementById('trace_position').onmouseup = function(event){clearInterval(intr)}
 	document.getElementById('trace_position').onchange = takt_handler
 	document.getElementById('trace_position_value').onchange = takt_handler
 	
@@ -169,16 +206,32 @@ function init_flame(calls_tree_consolidated)
         .datum(calls_tree_consolidated)
         .call(flameGraph);
 }
-function telescope(addr)
+
+function htonl(n)
+{
+    return ((n & 0xFF000000) >> 24) | ((n & 0x00FF0000) >> 8) | ((n & 0x0000FF00) << 8) | ((n & 0x000000FF) << 24)
+}
+function deref_reg(value)
+{
+	for(var register in Registers.regs)
+		if(Registers.get(register) == value)
+			return register
+	return ""
+}
+function deref_mem(value)
 {
 	for(var page in MemoryMap)
-		if(MemoryMap[page][0] <= addr && addr < MemoryMap[page][1])
+		if(MemoryMap[page][0] <= value && value < MemoryMap[page][1])
 			return page
 	return ""
 }
+function deref(value)
+{
+	return deref_reg(value) || deref_mem(value) || ""
+}
 function is_stack(addr)
 {
-	return telescope(addr).indexOf("stack") == 0
+	return deref_mem(addr).indexOf("stack") == 0
 }
 
 function BYTE(val)
@@ -292,7 +345,7 @@ var Memory = {
 		$('#shadow').show().animate({opacity: 0.5})
 		for(i = 0; i < cells.length; i++)
 		{
-			console.log(i + "/" + cells.length)
+			//console.log(i + "/" + cells.length)
 			addr = cells[i].getAttribute("addr")
 			$.ajax( { url: "http://127.0.0.1:5000/data/" + addr + "/takt/" + Execution.takt + "/state",
 				dataType: 'json',
@@ -340,21 +393,61 @@ var Stack = {
 			else
 				stack.appendChild(entry)
 		}
-		entry.innerHTML = DWORD(addr) + ": " + val + " " + telescope(val)
+		var reg = deref_reg(addr)
+		entry.innerHTML = ((reg!='')?reg+"->":'') + DWORD(addr) + ": " + val + " " + deref(htonl(parseInt(val,16)))
 	},
 	read: function(addr)
 	{
 		addr = (addr >> 2) << 2
 		var entry = document.getElementById("stack_"+addr)
 		entry.classList.add("stack_read")
+
+		for(var takt in this.highlighted)
+		{
+			if(takt != Execution.takt && !this.highlighted[Execution.takt])
+				for(var _addr in this.highlighted[takt])
+				{
+					var _entry = document.getElementById("stack_"+_addr)
+					_entry.classList.remove( this.highlighted[takt][_addr].pop() )
+					var next = this.highlighted[takt][_addr].pop()
+					if(next)
+					{
+						_entry.classList.add(next)
+						this.highlighted[takt][_addr].push(next)
+					}
+				}
+		}
+		if(! this.highlighted[Execution.takt]) this.highlighted[Execution.takt] = {}
+		this.highlighted[Execution.takt][addr] = ["stack_read_ago_3", "stack_read_ago_2", "stack_read_ago_1", "stack_read"]
 	},
-	write: function(addr)
+	write: function(addr) // в hints могут указываться старые значения регистров
 	{
 		addr = (addr >> 2) << 2
 		var entry = document.getElementById("stack_"+addr), val = Memory.DWORD(addr)
 		entry.classList.add("stack_wrote")
-		entry.innerHTML = DWORD(addr) + ": " + val + " " + telescope(val)
-	}
+		var reg = deref_reg(addr)
+		entry.innerHTML = ((reg!='')?reg+"->":'') + DWORD(addr) + ": " + val + " " + deref(htonl(parseInt(val,16)))
+
+		for(var takt in this.highlighted)
+		{
+			if(takt != Execution.takt && !this.highlighted[Execution.takt])
+				for(var _addr in this.highlighted[takt])
+				{
+					var _entry = document.getElementById("stack_"+_addr)
+					_entry.classList.remove( this.highlighted[takt][_addr].pop() )
+					var next = this.highlighted[takt][_addr].pop()
+					if(next)
+					{
+						_entry.classList.add(next)
+						this.highlighted[takt][_addr].push(next)
+					}
+				}
+		}
+		if(! this.highlighted[Execution.takt]) this.highlighted[Execution.takt] = {}
+		this.highlighted[Execution.takt][addr] = ["stack_wrote_ago_3", "stack_wrote_ago_2", "stack_wrote_ago_1", "stack_wrote"]
+	},
+	update: function() // нужно учитывать изменение регистров указывающие на адреса
+	{}
 }
 var Registers = {
 	highlighted: {},
@@ -383,7 +476,7 @@ var Registers = {
 				this.highlighted[name] = ["reg_changed_ago_2", "reg_changed_ago_1", "reg_changed"]
 			}
 			reg.getElementsByClassName('value')[0].innerHTML = DWORD(val)
-			reg.getElementsByClassName('hints')[0].innerHTML = telescope(val)
+			reg.getElementsByClassName('hints')[0].innerHTML = deref_mem(val)
 			//reg.classList.add("reg_points_r")
 		}
 	},
@@ -534,21 +627,21 @@ var Tree = {
 		out.innerHTML=''
 		for(var i = 0; i < calls.length; i++)
 		{
-			//func_name = telescope(calls[i].addr)
-			out.innerHTML += '<div id="call_'+i+'">`' + '-'.repeat(calls[i].deep) + "0x" + DWORD(calls[i].addr) + '()</div>'
+			//func_name = deref_mem(calls[i].addr)
+			out.innerHTML += '<div id="call_'+i+'" class="call" takt='+calls[i].takt+' onclick="tree_handler(event)">`' + '-'.repeat(calls[i].deep) + "0x" + DWORD(calls[i].addr) + '() // '+calls[i].takt+'</div>'
 		}
 	},
 	select: function(calls, takt)
 	{
-		for(var i = 0; i < calls.length; i++)
-			if(takt < calls[i].takt)
+		for(var n = 0; n < calls.length; n++)
+			if(takt < calls[n].takt)
 			{
-				goto_tree(i)
+				goto_tree(n)
 				if(this.prev)
 					document.getElementById('call_'+this.prev).classList.remove('call_current')	
-				document.getElementById('call_'+i).classList.add('call_current')
-				this.prev = i
-				return i
+				document.getElementById('call_'+n).classList.add('call_current')
+				this.prev = n
+				return n
 			}
 	}
 }
